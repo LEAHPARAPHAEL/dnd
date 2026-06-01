@@ -1,0 +1,57 @@
+{
+    "name": "Siris",
+    "source": "Custom",
+    "size": [
+        "M"
+    ],
+    "type": "humanoid",
+    "alignment": [
+        "N"
+    ],
+    "ac": [
+        10
+    ],
+    "hp": {
+        "average": 93,
+        "formula": "17d8 + 17"
+    },
+    "speed": {
+        "walk": 30
+    },
+    "str": 10,
+    "dex": 10,
+    "con": 10,
+    "int": 10,
+    "wis": 10,
+    "cha": 10,
+    "action": [
+        {
+            "name": "Unarmed Strike",
+            "entries": [
+                "{@atk mw} {@hit 2} to hit, reach 5 ft., one target. {@h}1 bludgeoning damage."
+            ]
+        }
+    ],
+    "cr": "13",
+    "spellcasting": [
+        {
+            "name": "Spellcasting",
+            "type": "spellcasting",
+            "headerEntries": [
+                "Siris is a @level spellcaster. Its spellcasting ability is @ability (spell save {@custom_dc}, {@custom_hit} to hit with spell attacks). Siris has the following spells prepared:"
+            ],
+            "ability": "int",
+            "custom_dc": 10,
+            "custom_hit": 2,
+            "spells": {
+                "2": {
+                    "spells": [
+                        "{@spell air bubble}"
+                    ],
+                    "slots": 1
+                }
+            }
+        }
+    ],
+    "level": 13
+}

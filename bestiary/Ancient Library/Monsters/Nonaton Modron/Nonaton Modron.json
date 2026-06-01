@@ -1,0 +1,157 @@
+{
+    "name": "Nonaton Modron",
+    "source": "MPP",
+    "page": 38,
+    "referenceSources": [
+        "SatO",
+        "ToFW"
+    ],
+    "size": [
+        "L"
+    ],
+    "type": "construct",
+    "alignment": [
+        "L",
+        "N"
+    ],
+    "alignmentPrefix": "typically ",
+    "ac": [
+        {
+            "ac": 16,
+            "from": [
+                "natural armor"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 161,
+        "formula": "19d10 + 57"
+    },
+    "speed": {
+        "walk": 30,
+        "fly": {
+            "number": 30,
+            "condition": "(hover)"
+        },
+        "canHover": true
+    },
+    "initiative": {
+        "advantageMode": "adv"
+    },
+    "str": 18,
+    "dex": 13,
+    "con": 16,
+    "int": 16,
+    "wis": 16,
+    "cha": 13,
+    "save": {
+        "int": "+7",
+        "wis": "+7"
+    },
+    "skill": {
+        "investigation": "+7",
+        "perception": "+11"
+    },
+    "senses": [
+        "truesight 120 ft."
+    ],
+    "passive": 21,
+    "languages": [
+        "Modron",
+        "telepathy 120 ft."
+    ],
+    "cr": "10",
+    "spellcasting": [
+        {
+            "name": "Spellcasting",
+            "type": "spellcasting",
+            "headerEntries": [
+                "The nonaton casts one of the following spells, requiring no material components and using Intelligence as the spellcasting ability (spell save {@dc 15}):"
+            ],
+            "will": [
+                "{@spell detect magic}",
+                "{@spell dispel magic}",
+                "{@spell mending} (as an action)"
+            ],
+            "daily": {
+                "1e": [
+                    "{@spell plane shift} (self only)",
+                    "{@spell protection from evil and good}"
+                ]
+            },
+            "ability": "int",
+            "displayAs": "action"
+        }
+    ],
+    "trait": [
+        {
+            "name": "Axiomatic Mind",
+            "entries": [
+                "The nonaton can't be compelled to act in a manner contrary to its nature or its instructions."
+            ]
+        },
+        {
+            "name": "Combat Ready",
+            "entries": [
+                "The nonaton has advantage on initiative rolls."
+            ]
+        },
+        {
+            "name": "Disintegration",
+            "entries": [
+                "If the nonaton dies, its body disintegrates into dust, leaving behind anything it was carrying."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The nonaton makes three Arm attacks and uses Pillar of Truth or Spellcasting."
+            ]
+        },
+        {
+            "name": "Arm",
+            "entries": [
+                "{@atk mw} {@hit 8} to hit, reach 10 ft., one target. {@h}13 ({@damage 2d8 + 4}) piercing damage, and if the target is a Medium or smaller creature, it has the {@condition grappled} condition (escape {@dc 14}). Until this grapple ends, the nonaton can't use this arm against other targets. The nonaton has nine arms, each of which can grapple one target."
+            ]
+        },
+        {
+            "name": "Pillar of Truth",
+            "entries": [
+                "The nonaton chooses a point on the ground that it can see within 60 feet of itself. A 60-foot-tall, 20-foot-radius cylinder of magical force rises from that point. Each creature in that area must make a {@dc 15} Dexterity saving throw. On a failed save, a creature takes 21 ({@damage 6d6}) force damage, and the creature reverts to its original form (if it's in a different form) and can't assume a different form until the end of its next turn. On a successful save, a creature takes half as much damage only."
+            ]
+        }
+    ],
+    "senseTags": [
+        "U"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "languageTags": [
+        "OTH",
+        "TP"
+    ],
+    "damageTags": [
+        "O",
+        "P"
+    ],
+    "spellcastingTags": [
+        "O"
+    ],
+    "miscTags": [
+        "AOE",
+        "MW",
+        "RCH"
+    ],
+    "savingThrowForced": [
+        "dexterity"
+    ],
+    "savingThrowForcedSpell": [
+        "charisma"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

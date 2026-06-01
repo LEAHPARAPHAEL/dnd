@@ -1,0 +1,184 @@
+{
+    "name": "Abjurer",
+    "source": "VGM",
+    "page": 209,
+    "reprintedAs": [
+        "Abjurer Wizard|MPMM"
+    ],
+    "size": [
+        "M"
+    ],
+    "type": {
+        "type": "humanoid",
+        "tags": [
+            "any race"
+        ]
+    },
+    "alignment": [
+        "A"
+    ],
+    "ac": [
+        12,
+        {
+            "ac": 15,
+            "condition": "with {@spell mage armor}",
+            "braces": true
+        }
+    ],
+    "hp": {
+        "average": 84,
+        "formula": "13d8 + 26"
+    },
+    "speed": {
+        "walk": 30
+    },
+    "str": 9,
+    "dex": 14,
+    "con": 14,
+    "int": 18,
+    "wis": 12,
+    "cha": 11,
+    "save": {
+        "int": "+8",
+        "wis": "+5"
+    },
+    "skill": {
+        "arcana": "+8",
+        "history": "+8"
+    },
+    "passive": 11,
+    "languages": [
+        "any four languages"
+    ],
+    "cr": "9",
+    "spellcasting": [
+        {
+            "name": "Spellcasting",
+            "type": "spellcasting",
+            "headerEntries": [
+                "The abjurer is a 13th-level spellcaster. Its spellcasting ability is Intelligence (spell save {@dc 16}, {@hit 8} to hit with spell attacks). The abjurer has the following wizard spells prepared:"
+            ],
+            "spells": {
+                "0": {
+                    "spells": [
+                        "{@spell blade ward}",
+                        "{@spell dancing lights}",
+                        "{@spell mending}",
+                        "{@spell message}",
+                        "{@spell ray of frost}"
+                    ]
+                },
+                "1": {
+                    "slots": 4,
+                    "spells": [
+                        "{@spell alarm}*",
+                        "{@spell mage armor}*",
+                        "{@spell magic missile}",
+                        "{@spell shield}*"
+                    ]
+                },
+                "2": {
+                    "slots": 3,
+                    "spells": [
+                        "{@spell arcane lock}*",
+                        "{@spell invisibility}"
+                    ]
+                },
+                "3": {
+                    "slots": 3,
+                    "spells": [
+                        "{@spell counterspell}*",
+                        "{@spell dispel magic}*",
+                        "{@spell fireball}"
+                    ]
+                },
+                "4": {
+                    "slots": 3,
+                    "spells": [
+                        "{@spell banishment}*",
+                        "{@spell stoneskin}*"
+                    ]
+                },
+                "5": {
+                    "slots": 2,
+                    "spells": [
+                        "{@spell cone of cold}",
+                        "{@spell wall of force}"
+                    ]
+                },
+                "6": {
+                    "slots": 1,
+                    "spells": [
+                        "{@spell flesh to stone}",
+                        "{@spell globe of invulnerability}*"
+                    ]
+                },
+                "7": {
+                    "slots": 1,
+                    "spells": [
+                        "{@spell symbol}*",
+                        "{@spell teleport}"
+                    ]
+                }
+            },
+            "footerEntries": [
+                "*Abjuration spell of 1st level or higher"
+            ],
+            "ability": "int"
+        }
+    ],
+    "trait": [
+        {
+            "name": "Arcane Ward",
+            "entries": [
+                "The abjurer has a magical ward that has 30 hit points. Whenever the abjurer takes damage, the ward takes the damage instead. If the ward is reduced to 0 hit points, the abjurer takes any remaining damage. When the abjurer casts an abjuration spell of 1st level or higher, the ward regains a number of hit points equal to twice the level of the spell."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Quarterstaff",
+            "entries": [
+                "{@atk mw} {@hit 3} to hit, reach 5 ft., one target. {@h}2 ({@damage 1d6 - 1}) bludgeoning damage, or 3 ({@damage 1d8 - 1}) bludgeoning damage if used with two hands."
+            ]
+        }
+    ],
+    "environment": [
+        "urban"
+    ],
+    "soundClip": {
+        "type": "internal",
+        "path": "bestiary/abjurer.opus"
+    },
+    "attachedItems": [
+        "quarterstaff|phb"
+    ],
+    "languageTags": [
+        "X"
+    ],
+    "damageTags": [
+        "B"
+    ],
+    "damageTagsSpell": [
+        "C",
+        "F",
+        "N",
+        "O"
+    ],
+    "spellcastingTags": [
+        "CW"
+    ],
+    "miscTags": [
+        "MLW",
+        "MW"
+    ],
+    "savingThrowForcedSpell": [
+        "charisma",
+        "constitution",
+        "dexterity",
+        "intelligence",
+        "wisdom"
+    ],
+    "hasToken": true,
+    "hasFluff": true
+}

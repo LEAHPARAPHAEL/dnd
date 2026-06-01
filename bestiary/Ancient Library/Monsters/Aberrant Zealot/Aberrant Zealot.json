@@ -1,0 +1,174 @@
+{
+    "name": "Aberrant Zealot",
+    "source": "PaBTSO",
+    "page": 203,
+    "size": [
+        "M"
+    ],
+    "type": "aberration",
+    "alignment": [
+        "C",
+        "E"
+    ],
+    "alignmentPrefix": "typically ",
+    "ac": [
+        {
+            "ac": 16,
+            "from": [
+                "{@item studded leather armor|PHB}"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 93,
+        "formula": "17d8 + 17"
+    },
+    "speed": {
+        "walk": 30
+    },
+    "str": 15,
+    "dex": 18,
+    "con": 12,
+    "int": 13,
+    "wis": 8,
+    "cha": 19,
+    "save": {
+        "dex": "+7",
+        "cha": "+7"
+    },
+    "skill": {
+        "perception": "+5"
+    },
+    "senses": [
+        "darkvision 60 ft.",
+        "truesight 10 ft."
+    ],
+    "passive": 15,
+    "resist": [
+        "psychic"
+    ],
+    "conditionImmune": [
+        "blinded",
+        "charmed",
+        "frightened",
+        "grappled",
+        "restrained"
+    ],
+    "languages": [
+        "Common",
+        "Deep Speech"
+    ],
+    "cr": "8",
+    "spellcasting": [
+        {
+            "name": "Spellcasting (Psionics)",
+            "type": "spellcasting",
+            "headerEntries": [
+                "The zealot casts one of the following spells, requiring no components and using Charisma as the spellcasting ability (spell save {@dc 15}):"
+            ],
+            "will": [
+                "{@spell detect thoughts}",
+                "{@spell minor illusion}"
+            ],
+            "daily": {
+                "1e": [
+                    "{@spell arcane gate}",
+                    "{@spell hunger of Hadar}"
+                ]
+            },
+            "ability": "cha",
+            "displayAs": "action"
+        }
+    ],
+    "trait": [
+        {
+            "name": "Aberrant Form",
+            "entries": [
+                "The zealot exudes the chaos of the Far Realm. Any non-Aberration creature that starts its turn within 5 feet of the zealot must succeed on a {@dc 15} Wisdom saving throw or take 7 ({@damage 2d6}) psychic damage."
+            ]
+        },
+        {
+            "name": "Weirdly Pliable",
+            "entries": [
+                "The zealot, along with any equipment it is wearing or carrying, is unnaturally flexible. The zealot can move through any space as narrow as 1 inch without squeezing."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The zealot makes one Psychic Rend attack and two Shortsword attacks."
+            ]
+        },
+        {
+            "name": "Psychic Rend",
+            "entries": [
+                "{@atk ms,rs} {@hit 7} to hit, reach 15 ft. or range 120 ft., one target. {@h}14 ({@damage 3d6 + 4}) psychic damage, and the target must succeed on a {@dc 15} Wisdom saving throw or have the {@condition stunned} condition until the start of the zealot's next turn."
+            ]
+        },
+        {
+            "name": "Shortsword",
+            "entries": [
+                "{@atk mw} {@hit 7} to hit, reach 15 ft., one target. {@h}7 ({@damage 1d6 + 4}) piercing damage plus 7 ({@damage 2d6}) psychic damage."
+            ]
+        }
+    ],
+    "bonus": [
+        {
+            "name": "Void Warp {@recharge 5}",
+            "entries": [
+                "The zealot teleports, along with any equipment it is wearing or carrying, to an unoccupied space it can see within 120 feet of itself, leaving a churning void in the space it left. Immediately after it teleports, each creature within 30 feet of the void other than the zealot must make a {@dc 15} Strength saving throw. On a failed save, a creature takes 18 ({@damage 4d8}) force damage and is pulled to the unoccupied space closest to the void. On a successful save, the creature takes half as much damage only. The void then disappears."
+            ]
+        }
+    ],
+    "attachedItems": [
+        "shortsword|phb"
+    ],
+    "senseTags": [
+        "D",
+        "U"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "languageTags": [
+        "C",
+        "DS"
+    ],
+    "damageTags": [
+        "O",
+        "P",
+        "Y"
+    ],
+    "damageTagsSpell": [
+        "A",
+        "C"
+    ],
+    "spellcastingTags": [
+        "P"
+    ],
+    "miscTags": [
+        "AOE",
+        "MLW",
+        "MW",
+        "RCH"
+    ],
+    "conditionInflict": [
+        "stunned"
+    ],
+    "conditionInflictSpell": [
+        "blinded"
+    ],
+    "savingThrowForced": [
+        "strength",
+        "wisdom"
+    ],
+    "savingThrowForcedSpell": [
+        "dexterity",
+        "wisdom"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

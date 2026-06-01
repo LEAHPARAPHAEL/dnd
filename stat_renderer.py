@@ -147,7 +147,6 @@ class StatBlockRenderer(tk.Frame):
         self.text.tag_configure("bold", font=self.body_bold, foreground="black")
         self.text.tag_configure("body_indented", font=self.body_font, foreground="black", lmargin1=20, lmargin2=20, spacing3=8)
 
-        # LINK TAG
         self.text.tag_configure("spell_link", foreground="#4a90e2", underline=True)
         self.text.tag_bind("spell_link", "<Enter>", lambda e: self.text.config(cursor="hand2"))
         self.text.tag_bind("spell_link", "<Leave>", lambda e: self.text.config(cursor=""))
@@ -223,7 +222,7 @@ class StatBlockRenderer(tk.Frame):
         add_basic_field("Source:", "source")
         add_basic_field("Challenge Rating:", "cr", width=10)
 
-        # Unpack AC intelligently
+        # Smart AC Parser
         ac_val = self.edit_data.get("ac", [10])
         if isinstance(ac_val, list) and len(ac_val) > 0: ac_val = ac_val[0]
         if isinstance(ac_val, dict): ac_val = ac_val.get("ac", 10)
@@ -234,7 +233,7 @@ class StatBlockRenderer(tk.Frame):
         self.edit_refs["ac"] = ac_entry
         row += 1
 
-        # Unpack HP Formula natively
+        # Smart HP Parser
         hp_formula = self.edit_data.get("hp", {}).get("formula", "1d8")
         tk.Label(basic_frame, text="Hit Points (Formula):", bg="#fdf1dc", font=self.body_bold).grid(row=row, column=0, sticky="e", padx=5, pady=2)
         hp_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
@@ -326,7 +325,6 @@ class StatBlockRenderer(tk.Frame):
             s_en.grid(row=3, column=i+1, padx=5, pady=2)
             self.edit_ability_refs[stat] = (v_en, m_en, s_en)
 
-        # Arrays and Embedded Spellcasting Managers
         self.attack_tags = {"None": "", "Melee Weapon": "{@atk mw}", "Ranged Weapon": "{@atk rw}", "Melee/Ranged Weapon": "{@atk mw,rw}", "Melee Spell": "{@atk ms}", "Ranged Spell": "{@atk rs}", "Melee/Ranged Spell": "{@atk ms,rs}"}
         self.inv_attack_tags = {v: k for k, v in self.attack_tags.items() if v}
 
@@ -356,6 +354,7 @@ class StatBlockRenderer(tk.Frame):
         btn_frame.pack(side=tk.LEFT, padx=15)
         tk.Button(btn_frame, text="+ Add Field", bg="#d9ad6c", font=("Arial", 10, "bold"), command=lambda: add_item()).pack(side=tk.LEFT, padx=5)
 
+        # Embedded Spellcasting UI
         sc_type = "slots" if key == "trait" else ("innate" if key == "action" else None)
         sc_container = tk.Frame(sec_frame, bg="#fdf1dc")
         sc_container.pack(fill=tk.X)
@@ -435,7 +434,6 @@ class StatBlockRenderer(tk.Frame):
                                     se = tk.Entry(row, width=3)
                                     se.insert(0, str(lvl_data.get("slots", 0)))
                                     se.pack(side=tk.LEFT, padx=(0,10))
-                                    slots_entries[lvl_str] = se
                                 spells_list = lvl_data.setdefault("spells", [])
                                 for s_idx, s_name in enumerate(spells_list):
                                     sf = tk.Frame(row, bg="#e8d5b7", padx=2, pady=2, bd=1, relief=tk.RAISED)
@@ -531,8 +529,10 @@ class StatBlockRenderer(tk.Frame):
             name_entry = tk.Entry(top, width=30, font=self.body_font)
             name_entry.insert(0, name)
             name_entry.pack(side=tk.LEFT, padx=5)
+
+            # Smart Extraction for Attacks
+            hit_val, reach_val, dmg_form_val, dmg_type_val = "", "", "", ""
             
-            hit_val, reach_val, dmg_val = "", "", ""
             hit_m = re.search(r'{@hit ([^}]+)}', entries_str)
             if hit_m:
                 hit_val = hit_m.group(1)
@@ -543,12 +543,24 @@ class StatBlockRenderer(tk.Frame):
                 reach_val = reach_m.group(1)
                 entries_str = re.sub(r'reach \d+(?:/\d+)? ft\.', 'reach @attack_reach ft.', entries_str, count=1)
                 
-            dmg_m = re.search(r'{@h}(.*?)(?=\s+[a-zA-Z])', entries_str)
-            if dmg_m:
-                dmg_val = dmg_m.group(1).strip()
-                entries_str = entries_str.replace(f"{{@h}}{dmg_val}", "{@attack_dmg}")
+            dmg_m1 = re.search(r'{@h}\d+\s*\({@damage\s*([^}]+)}\)\s*(.*?)damage(?:\.)?', entries_str)
+            dmg_m2 = re.search(r'{@h}(\d+)\s+(.*?)damage(?:\.)?', entries_str)
+            
+            if dmg_m1:
+                dmg_form_val = dmg_m1.group(1).strip()
+                dmg_type_val = dmg_m1.group(2).strip()
+                entries_str = entries_str.replace(dmg_m1.group(0), "{@attack_dmg}")
+            elif dmg_m2:
+                dmg_form_val = dmg_m2.group(1).strip()
+                dmg_type_val = dmg_m2.group(2).strip()
+                entries_str = entries_str.replace(dmg_m2.group(0), "{@attack_dmg}")
             elif "{@h}" in entries_str:
-                entries_str = entries_str.replace("{@h}", "{@attack_dmg}")
+                dmg_m3 = re.search(r'{@h}(.*?)(?=\s+[a-zA-Z])', entries_str)
+                if dmg_m3:
+                    dmg_form_val = dmg_m3.group(1).strip()
+                    entries_str = entries_str.replace(f"{{@h}}{dmg_form_val}", "{@attack_dmg}")
+                else:
+                    entries_str = entries_str.replace("{@h}", "{@attack_dmg}")
 
             found_atk = "None"
             for tag, tag_name in self.inv_attack_tags.items():
@@ -564,33 +576,38 @@ class StatBlockRenderer(tk.Frame):
             
             def remove_item():
                 item_frame.destroy()
-                self.array_refs[key].remove((name_entry, atk_var, desc_text, hit_en, reach_en, dmg_en))
-                
+                self.array_refs[key].remove((name_entry, atk_var, desc_text, hit_en, reach_en, dmg_form_en, dmg_type_en))
             tk.Button(top, text="X Remove", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=remove_item).pack(side=tk.RIGHT)
             
             atk_params_frame = tk.Frame(item_frame, bg="#f5e6ce")
             atk_params_frame.pack(fill=tk.X, pady=2)
+            
             tk.Label(atk_params_frame, text="Hit Mod:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
             hit_en = tk.Entry(atk_params_frame, width=5)
             hit_en.insert(0, hit_val)
             hit_en.pack(side=tk.LEFT, padx=(2, 10))
             
-            tk.Label(atk_params_frame, text="Reach/Range:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            tk.Label(atk_params_frame, text="Reach:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
             reach_en = tk.Entry(atk_params_frame, width=8)
             reach_en.insert(0, reach_val)
             reach_en.pack(side=tk.LEFT, padx=(2, 10))
             
-            tk.Label(atk_params_frame, text="Damage:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
-            dmg_en = tk.Entry(atk_params_frame, width=15)
-            dmg_en.insert(0, dmg_val)
-            dmg_en.pack(side=tk.LEFT, padx=(2, 10))
+            tk.Label(atk_params_frame, text="Dmg Formula:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            dmg_form_en = tk.Entry(atk_params_frame, width=8)
+            dmg_form_en.insert(0, dmg_form_val)
+            dmg_form_en.pack(side=tk.LEFT, padx=(2, 10))
+            
+            tk.Label(atk_params_frame, text="Dmg Type:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            dmg_type_en = tk.Entry(atk_params_frame, width=12)
+            dmg_type_en.insert(0, dmg_type_val)
+            dmg_type_en.pack(side=tk.LEFT, padx=(2, 10))
 
             tk.Label(item_frame, text="Description / Entries:", bg="#f5e6ce", font=self.body_italic).pack(anchor="w", pady=(5,0))
             desc_text = tk.Text(item_frame, height=4, font=self.body_font, wrap=tk.WORD)
             desc_text.insert("1.0", entries_str)
             desc_text.pack(fill=tk.X)
             
-            self.array_refs[key].append((name_entry, atk_var, desc_text, hit_en, reach_en, dmg_en))
+            self.array_refs[key].append((name_entry, atk_var, desc_text, hit_en, reach_en, dmg_form_en, dmg_type_en))
             
         for item in self.edit_data.get(key, []):
             if isinstance(item, str): add_item(name="", entries_str=item)
@@ -603,11 +620,23 @@ class StatBlockRenderer(tk.Frame):
 
     def _handle_gui_save(self, monster_dir, save_callback):
         data = self.edit_data
+        
+        def calculate_avg(formula):
+            if formula.isdigit(): return int(formula)
+            match = re.match(r'(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?', formula.replace(' ', ''))
+            if match:
+                n_dice, d_size, m_sign = int(match.group(1)), int(match.group(2)), match.group(3)
+                m_val = int(match.group(4)) if match.group(4) else 0
+                avg = int(n_dice * ((d_size + 1) / 2.0))
+                if m_sign == '+': avg += m_val
+                elif m_sign == '-': avg -= m_val
+                return avg
+            return 0
+            
         for key, entry in self.edit_refs.items():
             if key in ["ac", "hp_formula"]: continue 
             val = entry.get().strip()
-            if key == "level":
-                data[key] = int(val) if val.isdigit() else 1
+            if key == "level": data[key] = int(val) if val.isdigit() else 1
             elif val.startswith("{") or val.startswith("["):
                 try: data[key] = json.loads(val)
                 except: data[key] = val
@@ -621,15 +650,7 @@ class StatBlockRenderer(tk.Frame):
         else: data["ac"] = [ac_str]
         
         hp_form = self.edit_refs["hp_formula"].get().strip()
-        avg = 10
-        match = re.match(r'(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?', hp_form.replace(' ', ''))
-        if match:
-            n_dice, d_size, m_sign = int(match.group(1)), int(match.group(2)), match.group(3)
-            m_val = int(match.group(4)) if match.group(4) else 0
-            avg = int(n_dice * ((d_size + 1) / 2.0))
-            if m_sign == '+': avg += m_val
-            elif m_sign == '-': avg -= m_val
-        data["hp"] = {"average": avg, "formula": hp_form}
+        data["hp"] = {"average": calculate_avg(hp_form) if hp_form else 10, "formula": hp_form}
 
         new_speed = {}
         for t_var, v_en, c_en, _ in self.speed_refs:
@@ -680,18 +701,28 @@ class StatBlockRenderer(tk.Frame):
 
         for key, items in self.array_refs.items():
             parsed_items = []
-            for name_entry, atk_var, desc_text, hit_en, reach_en, dmg_en in items:
+            for name_entry, atk_var, desc_text, hit_en, reach_en, dmg_form_en, dmg_type_en in items:
                 name = name_entry.get().strip()
                 desc = desc_text.get("1.0", "end-1c").strip()
                 atk_val = atk_var.get()
                 
                 h_val = hit_en.get().strip()
                 r_val = reach_en.get().strip()
-                d_val = dmg_en.get().strip()
+                f_val = dmg_form_en.get().strip()
+                t_val = dmg_type_en.get().strip()
                 
                 desc = desc.replace("@attack_hit", f"{{@hit {h_val}}}")
                 desc = desc.replace("@attack_reach", r_val)
-                desc = desc.replace("{@attack_dmg}", f"{{@h}}{d_val}")
+                
+                if f_val:
+                    avg = calculate_avg(f_val)
+                    dmg_str = f"{{@h}}{avg} ({{@damage {f_val}}})" if 'd' in f_val.lower() else f"{{@h}}{f_val}"
+                    if t_val: dmg_str += f" {t_val} damage."
+                    else: dmg_str += " damage."
+                    desc = desc.replace("{@attack_dmg}", dmg_str)
+                    desc = desc.replace("..", ".") 
+                else:
+                    desc = desc.replace("{@attack_dmg}", "")
 
                 if atk_val != "None": desc = f"{self.attack_tags[atk_val]} {desc}"
                 if not name and not desc: continue

@@ -1,0 +1,135 @@
+{
+    "name": "Whirling Chandelier",
+    "source": "VEoR",
+    "page": 239,
+    "size": [
+        "L"
+    ],
+    "type": "construct",
+    "alignment": [
+        "U"
+    ],
+    "ac": [
+        {
+            "ac": 13,
+            "from": [
+                "natural armor"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 105,
+        "formula": "14d10 + 28"
+    },
+    "speed": {
+        "walk": 30,
+        "fly": {
+            "number": 30,
+            "condition": "(hover)"
+        },
+        "canHover": true
+    },
+    "str": 18,
+    "dex": 15,
+    "con": 15,
+    "int": 3,
+    "wis": 5,
+    "cha": 1,
+    "senses": [
+        "blindsight 60 ft. (blind beyond this radius)"
+    ],
+    "passive": 7,
+    "resist": [
+        "fire"
+    ],
+    "immune": [
+        "poison",
+        "psychic"
+    ],
+    "conditionImmune": [
+        "blinded",
+        "charmed",
+        "deafened",
+        "exhaustion",
+        "frightened",
+        "paralyzed",
+        "petrified",
+        "poisoned"
+    ],
+    "languages": [
+        "understands Common but can't speak"
+    ],
+    "cr": "7",
+    "trait": [
+        {
+            "name": "False Appearance",
+            "entries": [
+                "If the chandelier is motionless at the start of combat, it has advantage on its initiative roll. Moreover, if a creature hasn't observed the chandelier move or act, that creature must succeed on a {@dc 18} Intelligence ({@skill Investigation}) check to discern that the chandelier is animate."
+            ]
+        },
+        {
+            "name": "Fiery Aura",
+            "entries": [
+                "Any creature that starts its turn within 5 feet of the chandelier takes 7 ({@damage 2d6}) fire damage."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The chandelier makes three Chain attacks, three Lamp attacks, or a combination thereof."
+            ]
+        },
+        {
+            "name": "Chain",
+            "entries": [
+                "{@atk mw} {@hit 7} to hit, reach 15 ft., one target. {@h}13 ({@damage 2d8 + 4}) bludgeoning damage, and the target must succeed on a {@dc 15} Strength saving throw or be pulled into an unoccupied space within 5 feet of the chandelier."
+            ]
+        },
+        {
+            "name": "Lamp",
+            "entries": [
+                "{@atk mw} {@hit 7} to hit, reach 5 ft., one target. {@h}9 ({@damage 2d4 + 4}) bludgeoning damage plus 13 ({@damage 3d8}) fire damage."
+            ]
+        },
+        {
+            "name": "Blazing Vortex {@recharge 5}",
+            "entries": [
+                "Each creature within 20 feet of the chandelier and not behind {@quickref Cover||3||total cover} must succeed on a {@dc 14} Constitution saving throw or take 36 ({@damage 8d8}) fire damage and have the {@condition blinded} condition until the start of the chandelier's next turn."
+            ]
+        }
+    ],
+    "traitTags": [
+        "False Appearance"
+    ],
+    "senseTags": [
+        "B"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "languageTags": [
+        "C",
+        "CS"
+    ],
+    "damageTags": [
+        "B",
+        "F"
+    ],
+    "miscTags": [
+        "AOE",
+        "MW",
+        "RCH"
+    ],
+    "conditionInflict": [
+        "blinded"
+    ],
+    "savingThrowForced": [
+        "constitution",
+        "strength"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

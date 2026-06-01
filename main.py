@@ -81,7 +81,7 @@ class DnDStatManager(tk.Tk):
         
         self.stat_viewer = StatBlockRenderer(self.right_frame)
         self.stat_viewer.set_spell_callback(self.on_spell_clicked)
-        self.stat_viewer.set_spells_index(self.spells_index) # INJECT SPELLS INDEX
+        self.stat_viewer.set_spells_index(self.spells_index)
         
         self.search_frame = tk.Frame(self.right_frame, bg="#1e1e1e")
         self.search_var = tk.StringVar()
@@ -274,8 +274,10 @@ class DnDStatManager(tk.Tk):
 
             def on_icon_click(e):
                 is_core_folder = (node.name in ["Monsters", "NPCs", "Combats"])
-                if not node.is_entity and not is_action_btn and not is_core_folder: self.change_folder_icon(node)
-                else: on_click(e)
+                if not is_action_btn and not is_core_folder: 
+                    self.change_folder_icon(node)
+                else: 
+                    on_click(e)
 
             icon_lbl.bind("<Button-1>", on_icon_click)
             text_lbl.bind("<Button-1>", on_click)
@@ -323,7 +325,7 @@ class DnDStatManager(tk.Tk):
         npc_dir.mkdir(parents=True, exist_ok=True)
 
         npc_data = {
-            "name": safe_name, "source": "Custom", "size": ["M"], "type": "humanoid",
+            "name": safe_name, "source": "Custom", "level": 1, "size": ["M"], "type": "humanoid",
             "alignment": ["N"], "ac": [10], "hp": {"average": 4, "formula": "1d8"},
             "speed": {"walk": 30}, "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10,
             "action": [
@@ -336,6 +338,16 @@ class DnDStatManager(tk.Tk):
 
         with open(npc_dir / f"{safe_name}.json", "w", encoding="utf-8") as f:
             json.dump(npc_data, f, indent=4)
+
+        # Copy the default NPC icon
+        default_npc_icon = Path("./utils/default_npc.png")
+        if default_npc_icon.exists():
+            try:
+                img = Image.open(default_npc_icon)
+                img.save(npc_dir / "portrait.png", "PNG")
+                img.thumbnail((64, 64))
+                img.save(npc_dir / "icon.webp", "WEBP")
+            except Exception as e: print(f"Failed to copy default NPC icon: {e}")
 
         self._set_node_open(parent_path, True)
         self.refresh_tree()
@@ -404,11 +416,21 @@ class DnDStatManager(tk.Tk):
             
         try:
             img = Image.open(file_path)
-            img.thumbnail((64, 64))
-            for old_ext in ['.png', '.jpg', '.jpeg', '.webp']:
-                old_file = node.path / f"{node.name}{old_ext}"
-                if old_file.exists(): old_file.unlink()
-            img.save(node.path / f"{node.name}.png", "PNG")
+            if node.is_entity:
+                for old_ext in ['.png', '.jpg', '.jpeg', '.webp']:
+                    old_p = node.path / f"portrait{old_ext}"
+                    old_i = node.path / f"icon{old_ext}"
+                    if old_p.exists(): old_p.unlink()
+                    if old_i.exists(): old_i.unlink()
+                img.save(node.path / "portrait.png", "PNG")
+                img.thumbnail((64, 64))
+                img.save(node.path / "icon.webp", "WEBP")
+            else:
+                img.thumbnail((64, 64))
+                for old_ext in ['.png', '.jpg', '.jpeg', '.webp']:
+                    old_file = node.path / f"{node.name}{old_ext}"
+                    if old_file.exists(): old_file.unlink()
+                img.save(node.path / f"{node.name}.png", "PNG")
             self.refresh_tree()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process image: {e}")
@@ -442,7 +464,6 @@ class DnDStatManager(tk.Tk):
 
     def resolve_copy(self, child_data, headers):
         if "_copy" not in child_data: return child_data
-
         copy_info = child_data["_copy"]
         base_name = copy_info.get("name")
         base_source = copy_info.get("source", "Unknown").lower()
@@ -476,7 +497,6 @@ class DnDStatManager(tk.Tk):
 
             for mod_key, mod_val in mods.items():
                 if mod_key == "*": continue
-                
                 mod_actions = mod_val if isinstance(mod_val, list) else [mod_val]
                 for m_action in mod_actions:
                     if isinstance(m_action, str):
@@ -578,7 +598,6 @@ class DnDStatManager(tk.Tk):
 
         close_btn = tk.Button(overlay, text="CLOSE", command=overlay.destroy, bg="#58180d", fg="white", font=("Georgia", 14))
         close_btn.place(x=20, y=20)
-
 
 def main():
     parser = argparse.ArgumentParser()

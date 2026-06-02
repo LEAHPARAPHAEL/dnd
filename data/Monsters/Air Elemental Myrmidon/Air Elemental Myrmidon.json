@@ -1,0 +1,148 @@
+{
+    "name": "Air Elemental Myrmidon",
+    "source": "MTF",
+    "page": 202,
+    "otherSources": [
+        {
+            "source": "PotA",
+            "page": 212
+        }
+    ],
+    "referenceSources": [
+        "DC",
+        "DIP",
+        "PotA",
+        "SLW"
+    ],
+    "reprintedAs": [
+        "Air Elemental Myrmidon|MPMM"
+    ],
+    "size": [
+        "M"
+    ],
+    "type": "elemental",
+    "alignment": [
+        "N"
+    ],
+    "ac": [
+        {
+            "ac": 18,
+            "from": [
+                "{@item plate armor|phb}"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 117,
+        "formula": "18d8 + 36"
+    },
+    "speed": {
+        "walk": 30,
+        "fly": {
+            "number": 30,
+            "condition": "(hover)"
+        },
+        "canHover": true
+    },
+    "str": 18,
+    "dex": 14,
+    "con": 14,
+    "int": 9,
+    "wis": 10,
+    "cha": 10,
+    "senses": [
+        "darkvision 60 ft."
+    ],
+    "passive": 10,
+    "resist": [
+        "lightning",
+        "thunder",
+        {
+            "resist": [
+                "bludgeoning",
+                "piercing",
+                "slashing"
+            ],
+            "note": "from nonmagical attacks",
+            "cond": true
+        }
+    ],
+    "immune": [
+        "poison"
+    ],
+    "conditionImmune": [
+        "paralyzed",
+        "petrified",
+        "poisoned",
+        "prone"
+    ],
+    "languages": [
+        "Auran",
+        "one language of its creator's choice"
+    ],
+    "cr": "7",
+    "trait": [
+        {
+            "name": "Magic Weapons",
+            "entries": [
+                "The myrmidon's weapon attacks are magical."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The myrmidon makes three flail attacks."
+            ]
+        },
+        {
+            "name": "Flail",
+            "entries": [
+                "{@atk mw} {@hit 7} to hit, reach 5 ft., one target. {@h}8 ({@damage 1d8 + 4}) bludgeoning damage."
+            ]
+        },
+        {
+            "name": "Lightning Strike {@recharge}",
+            "entries": [
+                "The myrmidon makes one flail attack. On a hit, the target takes an extra 18 ({@damage 4d8}) lightning damage, and the target must succeed on a {@dc 13} Constitution saving throw or be {@condition stunned} until the end of the myrmidon's next turn."
+            ]
+        }
+    ],
+    "soundClip": {
+        "type": "internal",
+        "path": "bestiary/air-elemental-myrmidon.opus"
+    },
+    "attachedItems": [
+        "flail|phb"
+    ],
+    "traitTags": [
+        "Magic Weapons"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "languageTags": [
+        "AU"
+    ],
+    "damageTags": [
+        "B",
+        "L"
+    ],
+    "miscTags": [
+        "MLW",
+        "MW"
+    ],
+    "conditionInflict": [
+        "stunned"
+    ],
+    "savingThrowForced": [
+        "constitution"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

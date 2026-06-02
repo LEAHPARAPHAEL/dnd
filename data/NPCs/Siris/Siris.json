@@ -1,0 +1,37 @@
+{
+    "name": "Siris",
+    "source": "Custom",
+    "level": 14,
+    "size": [
+        "M"
+    ],
+    "type": "humanoid",
+    "alignment": [
+        "N"
+    ],
+    "ac": [
+        21
+    ],
+    "hp": {
+        "average": 220,
+        "formula": "40d10"
+    },
+    "speed": {
+        "walk": 40
+    },
+    "str": 18,
+    "dex": 22,
+    "con": 16,
+    "int": 16,
+    "wis": 18,
+    "cha": 16,
+    "action": [
+        {
+            "name": "Unarmed Strike",
+            "entries": [
+                "{@atk mw} {@hit 2} to hit, reach 5 ft., one target. {@h}1 bludgeoning damage."
+            ]
+        }
+    ],
+    "cr": ""
+}

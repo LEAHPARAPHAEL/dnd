@@ -1,0 +1,84 @@
+{
+    "name": "Abyssal Wretch",
+    "source": "MTF",
+    "page": 136,
+    "referenceSources": [
+        "BGDIA"
+    ],
+    "size": [
+        "M"
+    ],
+    "type": {
+        "type": "fiend",
+        "tags": [
+            "demon"
+        ]
+    },
+    "alignment": [
+        "C",
+        "E"
+    ],
+    "ac": [
+        11
+    ],
+    "hp": {
+        "average": 18,
+        "formula": "4d8"
+    },
+    "speed": {
+        "walk": 20
+    },
+    "str": 9,
+    "dex": 12,
+    "con": 11,
+    "int": 5,
+    "wis": 8,
+    "cha": 5,
+    "senses": [
+        "darkvision 120 ft."
+    ],
+    "passive": 9,
+    "resist": [
+        "cold",
+        "fire",
+        "lightning"
+    ],
+    "immune": [
+        "poison"
+    ],
+    "conditionImmune": [
+        "charmed",
+        "frightened",
+        "poisoned"
+    ],
+    "languages": [
+        "understands Abyssal but can't speak"
+    ],
+    "cr": "1/4",
+    "action": [
+        {
+            "name": "Bite",
+            "entries": [
+                "{@atk mw} {@hit 3} to hit, reach 5 ft., one target. {@h}5 ({@damage 1d8 + 1}) slashing damage."
+            ]
+        }
+    ],
+    "soundClip": {
+        "type": "internal",
+        "path": "bestiary/abyssal-wretch.opus"
+    },
+    "senseTags": [
+        "SD"
+    ],
+    "languageTags": [
+        "AB",
+        "CS"
+    ],
+    "damageTags": [
+        "S"
+    ],
+    "miscTags": [
+        "MW"
+    ],
+    "hasToken": true
+}

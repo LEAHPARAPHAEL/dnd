@@ -1,0 +1,133 @@
+{
+    "name": "Aartuk Elder",
+    "source": "BAM",
+    "page": 8,
+    "referenceSources": [
+        "LoX"
+    ],
+    "size": [
+        "L"
+    ],
+    "type": "plant",
+    "alignment": [
+        "L",
+        "E"
+    ],
+    "alignmentPrefix": "typically ",
+    "ac": [
+        {
+            "ac": 16,
+            "from": [
+                "natural armor"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 75,
+        "formula": "10d10 + 20"
+    },
+    "speed": {
+        "walk": 20,
+        "climb": 20
+    },
+    "str": 18,
+    "dex": 10,
+    "con": 15,
+    "int": 12,
+    "wis": 14,
+    "cha": 12,
+    "senses": [
+        "darkvision 60 ft."
+    ],
+    "passive": 12,
+    "languages": [
+        "Aartuk"
+    ],
+    "cr": "3",
+    "spellcasting": [
+        {
+            "name": "Spellcasting (Psionics)",
+            "type": "spellcasting",
+            "headerEntries": [
+                "The aartuk casts one of the following spells, requiring no spell components and using Wisdom as the spellcasting ability (spell save {@dc 12}):"
+            ],
+            "daily": {
+                "1e": [
+                    "{@spell calm emotions}",
+                    "{@spell detect magic}",
+                    "{@spell sending}"
+                ]
+            },
+            "ability": "wis",
+            "displayAs": "action"
+        }
+    ],
+    "trait": [
+        {
+            "name": "Spider Climb",
+            "entries": [
+                "The aartuk can climb difficult surfaces, including upside down on ceilings, without needing to make an ability check."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The aartuk makes two Branch attacks, two Radiant Pellet attacks, or one of each."
+            ]
+        },
+        {
+            "name": "Branch",
+            "entries": [
+                "{@atk mw} {@hit 6} to hit, reach 10 ft., one target. {@h}11 ({@damage 2d6 + 4}) bludgeoning damage."
+            ]
+        },
+        {
+            "name": "Radiant Pellet",
+            "entries": [
+                "{@atk rs} {@hit 4} to hit, range 60 ft., one target. {@h}10 ({@damage 4d4}) radiant damage."
+            ]
+        }
+    ],
+    "bonus": [
+        {
+            "name": "Tongue {@recharge}",
+            "entries": [
+                "The aartuk tries to use its gooey tongue to snare one Large or smaller creature it can see within 30 feet of itself. The target must make a {@dc 12} Dexterity saving throw. On a failed save, the target is {@condition grappled} by the tongue (escape {@dc 14}) and pulled up to 25 feet toward the aartuk. The tongue can grapple one creature at a time."
+            ]
+        }
+    ],
+    "traitTags": [
+        "Spider Climb"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "damageTags": [
+        "B",
+        "R"
+    ],
+    "spellcastingTags": [
+        "P"
+    ],
+    "miscTags": [
+        "MW",
+        "RCH"
+    ],
+    "conditionInflict": [
+        "grappled"
+    ],
+    "savingThrowForced": [
+        "dexterity"
+    ],
+    "savingThrowForcedSpell": [
+        "charisma"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

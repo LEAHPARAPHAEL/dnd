@@ -18,73 +18,79 @@ def fetch_5etools_monsters():
         return
 
     index_data = response.json()
-    
-    # ---------------------------------------------------------
-    # PASS 1: Download everything and build a lookup dictionary
-    # ---------------------------------------------------------
     raw_monsters = {}
     
     for source, filename in index_data.items():
         file_url = f"https://5e.tools/data/bestiary/{filename}"
         print(f"Downloading data from: {source}...")
-        
         try:
             file_response = requests.get(file_url, headers=headers)
             file_data = file_response.json()
-            
             if "monster" in file_data:
                 for monster in file_data["monster"]:
                     if "name" in monster:
-                        # Store using a tuple of (name, source) as a unique key
                         m_name = monster["name"].lower()
                         m_source = monster.get("source", "Unknown").lower()
                         raw_monsters[(m_name, m_source)] = monster
         except Exception as e:
             print(f"Error parsing {source}: {e}")
 
-    # ---------------------------------------------------------
-    # PASS 2: Extract data, resolving _copy references for missing fields
-    # ---------------------------------------------------------
     all_monsters = []
 
     def resolve_field(monster, field_name):
-        """Recursively look for a field, following _copy links if it's missing."""
-        # If the copied monster overrides the field (like a stronger variant having a higher CR), use it!
-        if field_name in monster:
-            return monster[field_name]
-        
-        # Otherwise, look at the base monster it was copied from
+        if field_name in monster: return monster[field_name]
         if "_copy" in monster:
             base_name = monster["_copy"].get("name", "").lower()
             base_source = monster["_copy"].get("source", "").lower()
-            
             base_monster = raw_monsters.get((base_name, base_source))
-            if base_monster:
-                return resolve_field(base_monster, field_name)
-                
-        return None # Field truly doesn't exist
+            if base_monster: return resolve_field(base_monster, field_name)
+        return None
 
     for (m_name, m_source), monster in raw_monsters.items():
-        # 1. Safely extract Challenge Rating (Checking parent if copied)
+        # CR
         raw_cr = resolve_field(monster, "cr")
         if raw_cr is None: raw_cr = "—"
         cr_val = str(raw_cr.get("cr", raw_cr)) if isinstance(raw_cr, dict) else str(raw_cr)
 
-        # 2. Safely extract Type (Checking parent if copied)
+        # Type
         raw_type = resolve_field(monster, "type")
         if raw_type is None: raw_type = "Unknown"
         type_val = str(raw_type.get("type", raw_type)).title() if isinstance(raw_type, dict) else str(raw_type).title()
+
+        # Size
+        raw_size = resolve_field(monster, "size")
+        size_val = "Medium"
+        if raw_size and isinstance(raw_size, list):
+            size_map = {"T": "Tiny", "S": "Small", "M": "Medium", "L": "Large", "H": "Huge", "G": "Gargantuan"}
+            size_val = size_map.get(raw_size[0], "Medium")
+
+        # Alignment
+        raw_align = resolve_field(monster, "alignment")
+        align_val = "Unaligned"
+        if raw_align:
+            if isinstance(raw_align[0], dict) and "special" in raw_align[0]:
+                align_val = raw_align[0]["special"]
+            else:
+                align_map = {"L": "Lawful", "N": "Neutral", "C": "Chaotic", "G": "Good", "E": "Evil", "U": "Unaligned", "A": "Any"}
+                clean_align = [a for a in raw_align if isinstance(a, str)]
+                if clean_align == ["N"]: align_val = "True Neutral"
+                else: align_val = " ".join([align_map.get(a, a) for a in clean_align])
+
+        # Environment
+        raw_env = resolve_field(monster, "environment")
+        env_val = [e.lower() for e in raw_env] if raw_env else []
 
         all_monsters.append({
             "name": monster["name"],
             "type": type_val,
             "cr": cr_val,
+            "size": size_val,
+            "alignment": align_val,
+            "environment": env_val,
             "source": monster.get("source", "Unknown")
         })
 
-    # Sort alphabetically by name
     all_monsters = sorted(all_monsters, key=lambda x: x["name"].lower())
-    
     output_path = Path("monsters.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(all_monsters, f, indent=4)

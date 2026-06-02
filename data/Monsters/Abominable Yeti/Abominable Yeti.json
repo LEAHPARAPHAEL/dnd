@@ -1,0 +1,144 @@
+{
+    "name": "Abominable Yeti",
+    "source": "MM",
+    "page": 306,
+    "referenceSources": [
+        "CM",
+        "EGW",
+        "IDRotF",
+        "SKT",
+        "WDMM"
+    ],
+    "reprintedAs": [
+        "Abominable Yeti|XMM"
+    ],
+    "size": [
+        "H"
+    ],
+    "type": "monstrosity",
+    "alignment": [
+        "C",
+        "E"
+    ],
+    "ac": [
+        {
+            "ac": 15,
+            "from": [
+                "natural armor"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 137,
+        "formula": "11d12 + 66"
+    },
+    "speed": {
+        "walk": 40,
+        "climb": 40
+    },
+    "str": 24,
+    "dex": 10,
+    "con": 22,
+    "int": 9,
+    "wis": 13,
+    "cha": 9,
+    "skill": {
+        "perception": "+5",
+        "stealth": "+4"
+    },
+    "senses": [
+        "darkvision 60 ft."
+    ],
+    "passive": 15,
+    "immune": [
+        "cold"
+    ],
+    "languages": [
+        "Yeti"
+    ],
+    "cr": "9",
+    "trait": [
+        {
+            "name": "Fear of Fire",
+            "entries": [
+                "If the yeti takes fire damage, it has disadvantage on attack rolls and ability checks until the end of its next turn."
+            ]
+        },
+        {
+            "name": "Keen Smell",
+            "entries": [
+                "The yeti has advantage on Wisdom ({@skill Perception}) checks that rely on smell."
+            ]
+        },
+        {
+            "name": "Snow Camouflage",
+            "entries": [
+                "The yeti has advantage on Dexterity ({@skill Stealth}) checks made to hide in snowy terrain."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The yeti can use its Chilling Gaze and makes two claw attacks."
+            ]
+        },
+        {
+            "name": "Claw",
+            "entries": [
+                "{@atk mw} {@hit 11} to hit, reach 5 ft., one target. {@h}14 ({@damage 2d6 + 7}) slashing damage plus 7 ({@damage 2d6}) cold damage."
+            ]
+        },
+        {
+            "name": "Chilling Gaze",
+            "entries": [
+                "The yeti targets one creature it can see within 30 feet of it. If the target can see the yeti, the target must succeed on a {@dc 18} Constitution saving throw against this magic or take 21 ({@damage 6d6}) cold damage and then be {@condition paralyzed} for 1 minute, unless it is immune to cold damage. The target can repeat the saving throw at the end of each of its turns, ending the effect on itself on a success. If the target's saving throw is successful, or if the effect ends on it, the target is immune to this yeti's gaze for 1 hour."
+            ]
+        },
+        {
+            "name": "Cold Breath {@recharge}",
+            "entries": [
+                "The yeti exhales a 30-foot cone of frigid air. Each creature in that area must make a {@dc 18} Constitution saving throw, taking 45 ({@damage 10d8}) cold damage on a failed save, or half as much damage on a successful one."
+            ]
+        }
+    ],
+    "environment": [
+        "arctic"
+    ],
+    "soundClip": {
+        "type": "internal",
+        "path": "bestiary/abominable-yeti.opus"
+    },
+    "traitTags": [
+        "Camouflage",
+        "Keen Senses"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "actionTags": [
+        "Breath Weapon",
+        "Multiattack"
+    ],
+    "languageTags": [
+        "OTH"
+    ],
+    "damageTags": [
+        "C",
+        "S"
+    ],
+    "miscTags": [
+        "AOE",
+        "MW"
+    ],
+    "conditionInflict": [
+        "paralyzed"
+    ],
+    "savingThrowForced": [
+        "constitution"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

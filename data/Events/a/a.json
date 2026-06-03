@@ -1,0 +1,12 @@
+{
+    "name": "a",
+    "description": "",
+    "monsters": [],
+    "npcs": [],
+    "combats": [],
+    "locations": [],
+    "connections": [],
+    "objects": [
+        "sword"
+    ]
+}

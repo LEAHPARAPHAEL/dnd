@@ -1,0 +1,14 @@
+{
+    "name": "a",
+    "description": "",
+    "monsters": [
+        "Aarakocra Spelljammer"
+    ],
+    "npcs": [],
+    "combats": [],
+    "events": [],
+    "connections": [],
+    "objects": [
+        "sword"
+    ]
+}

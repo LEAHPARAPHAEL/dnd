@@ -10,10 +10,13 @@ class StatBlockRenderer(tk.Frame):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, bg="#fdf1dc", *args, **kwargs) 
 
-        self.view_container = tk.Frame(self, bg="#fdf1dc"); self.view_container.pack(fill=tk.BOTH, expand=True)
-        self.v_scroll = ttk.Scrollbar(self.view_container, orient=tk.VERTICAL); self.v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.view_container = tk.Frame(self, bg="#fdf1dc")
+        self.view_container.pack(fill=tk.BOTH, expand=True)
+        self.v_scroll = ttk.Scrollbar(self.view_container, orient=tk.VERTICAL)
+        self.v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.text = tk.Text(self.view_container, bg="#fdf1dc", wrap=tk.WORD, borderwidth=0, highlightthickness=0, padx=40, pady=40, yscrollcommand=self.v_scroll.set)
-        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); self.v_scroll.config(command=self.text.yview)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.v_scroll.config(command=self.text.yview)
         
         self.spell_callback = None; self.spells_index = []
         self._setup_fonts_and_tags()
@@ -52,13 +55,6 @@ class StatBlockRenderer(tk.Frame):
         self.text.tag_bind("spell_link", "<Leave>", lambda e: self.text.config(cursor=""))
         self.text.tag_bind("spell_link", "<Button-1>", self._on_spell_click)
 
-    def _on_spell_click(self, event):
-        idx = self.text.index(f"@{event.x},{event.y}")
-        for t in self.text.tag_names(idx):
-            if t.startswith("SPELL_TAG:"):
-                if self.spell_callback: self.spell_callback(t.split(":", 1)[1])
-                break
-
     def insert_divider(self):
         div = tk.Frame(self.text, height=3, bg="#d9ad6c", width=max(10, self.text.winfo_width() - 80))
         self.text.window_create(tk.END, window=div); self.text.insert(tk.END, "\n"); self.dividers.append(div)
@@ -67,25 +63,13 @@ class StatBlockRenderer(tk.Frame):
         for btn in self.overlay_buttons: btn.destroy()
         self.overlay_buttons.clear()
 
-    def add_top_buttons(self, m_dir, view_cb, edit_cb, back_cb=None):
-        """Unified header control bar rendering to handle back buttons cleanly."""
+    def add_top_buttons(self, m_dir, view_cb, edit_cb):
         self.clear_overlays()
-        x_offset = -140
-        
         b_view = tk.Button(self.view_container, text="VIEW ARTWORK", bg="#d9ad6c", fg="black", font=("Georgia", 10, "bold"), command=lambda: view_cb(m_dir))
-        b_view.place(relx=1.0, x=x_offset, y=10, width=120, height=30)
-        self.overlay_buttons.append(b_view)
-        
-        x_offset -= 90
+        b_view.place(relx=1.0, x=-140, y=10, width=120, height=30)
         b_edit = tk.Button(self.view_container, text="EDIT", bg="#8a8a8a", fg="white", font=("Georgia", 10, "bold"), command=lambda: edit_cb(m_dir))
-        b_edit.place(relx=1.0, x=x_offset, y=10, width=80, height=30)
-        self.overlay_buttons.append(b_edit)
-        
-        if back_cb:
-            x_offset -= 90
-            b_back = tk.Button(self.view_container, text="BACK", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=back_cb)
-            b_back.place(relx=1.0, x=x_offset, y=10, width=80, height=30)
-            self.overlay_buttons.append(b_back)
+        b_edit.place(relx=1.0, x=-230, y=10, width=80, height=30)
+        self.overlay_buttons.extend([b_view, b_edit])
 
     def add_custom_spell_buttons(self, s_data, edit_cb, del_cb):
         self.clear_overlays()
@@ -108,7 +92,7 @@ class StatBlockRenderer(tk.Frame):
         top_frame.pack(fill=tk.X, pady=(0, 20))
         tk.Label(top_frame, text="EDIT MONSTER", font=self.header_font, fg="#58180d", bg="#fdf1dc").pack(side=tk.LEFT)
         tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=lambda: self._handle_gui_save(monster_dir, save_callback)).pack(side=tk.RIGHT, padx=5)
-        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=lambda: self._cancel_edit(cancel_callback)).pack(side=tk.RIGHT, padx=5)
+        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=cancel_callback).pack(side=tk.RIGHT, padx=5)
 
         basic_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
         basic_frame.pack(fill=tk.X, pady=10)
@@ -116,7 +100,7 @@ class StatBlockRenderer(tk.Frame):
         row = 0
         def add_basic_field(label_text, key, width=50):
             nonlocal row
-            tk.Label(basic_frame, text=label_text, bg="#fdf1dc", font=self.body_bold).grid(row=row, column=0, sticky="e", padx=5, pady=2)
+            tk.Label(basic_frame, text=label_text, bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=row, column=0, sticky="e", padx=5, pady=2)
             val = self.edit_data.get(key, "")
             if isinstance(val, (dict, list)): val = json.dumps(val)
             entry = tk.Entry(basic_frame, width=width, font=self.body_font)
@@ -133,7 +117,7 @@ class StatBlockRenderer(tk.Frame):
         ac_val = self.edit_data.get("ac", [10])
         if isinstance(ac_val, list) and len(ac_val) > 0: ac_val = ac_val[0]
         if isinstance(ac_val, dict): ac_val = ac_val.get("ac", 10)
-        tk.Label(basic_frame, text="Armor Class:", bg="#fdf1dc", font=self.body_bold).grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        tk.Label(basic_frame, text="Armor Class:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=row, column=0, sticky="e", padx=5, pady=2)
         ac_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
         ac_entry.insert(0, str(ac_val))
         ac_entry.grid(row=row, column=1, sticky="w", padx=5, pady=2)
@@ -141,7 +125,7 @@ class StatBlockRenderer(tk.Frame):
         row += 1
 
         hp_formula = self.edit_data.get("hp", {}).get("formula", "1d8")
-        tk.Label(basic_frame, text="Hit Points (Formula):", bg="#fdf1dc", font=self.body_bold).grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        tk.Label(basic_frame, text="Hit Points (Formula):", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=row, column=0, sticky="e", padx=5, pady=2)
         hp_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
         hp_entry.insert(0, str(hp_formula))
         hp_entry.grid(row=row, column=1, sticky="w", padx=5, pady=2)
@@ -151,7 +135,7 @@ class StatBlockRenderer(tk.Frame):
         ui_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
         ui_frame.pack(fill=tk.X, pady=5)
         
-        tk.Label(ui_frame, text="Size:", bg="#fdf1dc", font=self.body_bold).pack(side=tk.LEFT, padx=(5,2))
+        tk.Label(ui_frame, text="Size:", bg="#fdf1dc", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=(5,2))
         self.size_map = {"Tiny": "T", "Small": "S", "Medium": "M", "Large": "L", "Huge": "H", "Gargantuan": "G"}
         inv_size_map = {v: k for k, v in self.size_map.items()}
         cur_size = self.edit_data.get("size", ["M"])
@@ -159,7 +143,7 @@ class StatBlockRenderer(tk.Frame):
         self.size_var = tk.StringVar(value=inv_size_map.get(cur_size, "Medium"))
         ttk.Combobox(ui_frame, textvariable=self.size_var, values=list(self.size_map.keys()), state="readonly", width=12).pack(side=tk.LEFT, padx=(0, 20))
         
-        tk.Label(ui_frame, text="Alignment:", bg="#fdf1dc", font=self.body_bold).pack(side=tk.LEFT, padx=(5,2))
+        tk.Label(ui_frame, text="Alignment:", bg="#fdf1dc", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=(5,2))
         self.align_map = {
             "Lawful Good": ["L", "G"], "Neutral Good": ["N", "G"], "Chaotic Good": ["C", "G"],
             "Lawful Neutral": ["L", "N"], "True Neutral": ["N"], "Chaotic Neutral": ["C", "N"],
@@ -177,7 +161,7 @@ class StatBlockRenderer(tk.Frame):
 
         speed_master = tk.Frame(self.edit_inner, bg="#fdf1dc", pady=10)
         speed_master.pack(fill=tk.X)
-        tk.Label(speed_master, text="Speeds:", bg="#fdf1dc", font=self.body_bold).pack(side=tk.LEFT, anchor="n")
+        tk.Label(speed_master, text="Speeds:", bg="#fdf1dc", font=self.body_bold, fg="black").pack(side=tk.LEFT, anchor="n")
         
         self.speed_frame = tk.Frame(speed_master, bg="#fdf1dc")
         self.speed_frame.pack(side=tk.LEFT, padx=10)
@@ -191,7 +175,7 @@ class StatBlockRenderer(tk.Frame):
             v_en = tk.Entry(row, width=5)
             v_en.insert(0, str(s_val))
             v_en.pack(side=tk.LEFT, padx=2)
-            tk.Label(row, text="ft.", bg="#fdf1dc").pack(side=tk.LEFT)
+            tk.Label(row, text="ft.", bg="#fdf1dc", fg="black").pack(side=tk.LEFT)
             c_en = tk.Entry(row, width=15)
             c_en.insert(0, str(s_cond))
             c_en.pack(side=tk.LEFT, padx=2)
@@ -202,7 +186,7 @@ class StatBlockRenderer(tk.Frame):
             self.speed_refs.append((t_var, v_en, c_en, row))
 
         self.can_hover_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(speed_master, text="Can Hover", variable=self.can_hover_var, bg="#fdf1dc").pack(side=tk.LEFT, padx=10)
+        tk.Checkbutton(speed_master, text="Can Hover", variable=self.can_hover_var, bg="#fdf1dc", fg="black", activebackground="#fdf1dc").pack(side=tk.LEFT, padx=10)
         tk.Button(speed_master, text="+ Add Speed", bg="#d9ad6c", font=("Arial", 9, "bold"), command=add_speed_row).pack(side=tk.LEFT)
 
         for k, v in self.edit_data.get("speed", {}).items():
@@ -219,7 +203,7 @@ class StatBlockRenderer(tk.Frame):
 
         self.edit_ability_refs = {}
         for i, stat in enumerate(["str", "dex", "con", "int", "wis", "cha"]):
-            tk.Label(abilities_frame, text=stat.upper(), bg="#fdf1dc", font=self.body_bold).grid(row=0, column=i+1, padx=5)
+            tk.Label(abilities_frame, text=stat.upper(), bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=i+1, padx=5)
             v_en = tk.Entry(abilities_frame, width=6, justify="center", font=self.body_font)
             v_en.insert(0, str(self.edit_data.get(stat, 10)))
             v_en.grid(row=1, column=i+1, padx=5, pady=2)
@@ -274,17 +258,28 @@ class StatBlockRenderer(tk.Frame):
         def add_dialogue(d=None):
             d = d or {}
             f = tk.Frame(items_c, bg="#e2f0d9", bd=1, relief=tk.SOLID, pady=10, padx=10); f.pack(fill=tk.X, pady=5)
-            t = tk.Frame(f, bg="#e2f0d9"); t.pack(fill=tk.X)
-            ne = tk.Entry(t, width=30); ne.insert(0, d.get("name", f"Dialogue with {self.edit_refs['name'].get()}")); ne.pack(side=tk.LEFT, padx=5)
-            le = tk.Entry(t, width=15); le.insert(0, d.get("location", def_loc)); le.pack(side=tk.LEFT, padx=5)
-            te = tk.Entry(t, width=15); te.insert(0, d.get("time", "Act 1")); te.pack(side=tk.LEFT, padx=5)
+            t = tk.Frame(f, bg="#e2f0d9", pady=2)
+            t.pack(fill=tk.X)
+            
+            tk.Label(t, text="Name:", bg="#e2f0d9", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=2)
+            ne = tk.Entry(t, width=22, font=self.body_font); ne.insert(0, d.get("name", f"Dialogue with {self.edit_refs['name'].get()}")); ne.pack(side=tk.LEFT, padx=4)
+            
+            tk.Label(t, text="Location:", bg="#e2f0d9", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=2)
+            le = tk.Entry(t, width=15, font=self.body_font); le.insert(0, d.get("location", def_loc)); le.pack(side=tk.LEFT, padx=4)
+            
+            tk.Label(t, text="Event:", bg="#e2f0d9", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=2)
+            te = tk.Entry(t, width=15, font=self.body_font); te.insert(0, d.get("time", "Act 1")); te.pack(side=tk.LEFT, padx=4)
+            
+            tk.Label(f, text="Description:", bg="#e2f0d9", font=self.body_italic, fg="black").pack(anchor="w", pady=(5,0))
             txt = tk.Text(f, height=4, font=self.body_font, wrap=tk.WORD); txt.insert("1.0", "\n".join(d.get("entries", []))); txt.pack(fill=tk.X)
+            
             tk.Button(t, text="X", bg="#ff4d4d", command=lambda: (f.destroy(), self.dialogue_refs.remove((ne, le, te, txt)))).pack(side=tk.RIGHT)
             self.dialogue_refs.append((ne, le, te, txt))
         tk.Button(hdr, text="+ Add Dialogue", bg="#d9ad6c", command=add_dialogue).pack(side=tk.LEFT, padx=15)
         for dg in self.edit_data.get("dialogues", []): add_dialogue(dg)
-
+    
     def build_array_section(self, key, title, rebuild_all_sc, sync_all_sc):
+        import utils
         sec_frame = tk.Frame(self.arrays_frame, bg="#fdf1dc", pady=10)
         sec_frame.pack(fill=tk.X)
         header_frame = tk.Frame(sec_frame, bg="#fdf1dc")
@@ -294,6 +289,30 @@ class StatBlockRenderer(tk.Frame):
         btn_frame = tk.Frame(header_frame, bg="#fdf1dc")
         btn_frame.pack(side=tk.LEFT, padx=15)
         tk.Button(btn_frame, text="+ Add Field", bg="#d9ad6c", font=("Arial", 10, "bold"), command=lambda: add_item()).pack(side=tk.LEFT, padx=5)
+
+        # Helper to dynamically update Text widget height based on rendered content pixel ratios
+        def update_text_height(txt_widget):
+            txt_widget.update()
+            try:
+                last_idx = txt_widget.index("end-1c")
+                bbox_last = txt_widget.bbox(last_idx)
+                bbox_first = txt_widget.bbox("1.0")
+                if bbox_last and bbox_first:
+                    # Determine exact vertical content size in pixels
+                    content_pixel_height = bbox_last[1] + bbox_last[3]
+                    # Determine actual font line dimension in pixels
+                    line_font_height = bbox_first[3]
+                    # Calculate how many font-sized lines are needed to cover the layout height
+                    needed_lines = int((content_pixel_height + line_font_height - 1) // line_font_height) + 1
+                    
+                    line_count = int(txt_widget.count("1.0", "end-1c", "displaylines")[0])
+                    txt_widget.config(height=max(2, max(line_count, needed_lines)))
+                else:
+                    num_chips = len(txt_widget.window_names())
+                    estimated_rows = max(1, (num_chips + 2) // 3)
+                    txt_widget.config(height=max(2, estimated_rows * 2))
+            except:
+                txt_widget.config(height=2)
 
         sc_type = "slots" if key == "trait" else ("innate" if key == "action" else None)
         sc_container = tk.Frame(sec_frame, bg="#fdf1dc")
@@ -329,7 +348,7 @@ class StatBlockRenderer(tk.Frame):
                     block.pack(fill=tk.X, pady=5)
                     top = tk.Frame(block, bg="#f5e6ce")
                     top.pack(fill=tk.X)
-                    tk.Label(top, text="Innate Spellcasting" if is_innate_block else "Slots Spellcasting", font=self.body_bold, bg="#f5e6ce").pack(side=tk.LEFT)
+                    tk.Label(top, text="Innate Spellcasting" if is_innate_block else "Slots Spellcasting", font=self.body_bold, bg="#f5e6ce", fg="black").pack(side=tk.LEFT)
 
                     def make_remover(idx=i):
                         sync_all_sc()
@@ -340,19 +359,19 @@ class StatBlockRenderer(tk.Frame):
                     param_row = tk.Frame(block, bg="#f5e6ce")
                     param_row.pack(fill=tk.X, pady=5)
                     
-                    tk.Label(param_row, text="Ability:", bg="#f5e6ce", font=self.body_bold).pack(side=tk.LEFT)
+                    tk.Label(param_row, text="Ability:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
                     ab_var = tk.StringVar(value=sc_dict.get("ability", "int").capitalize())
                     ttk.Combobox(param_row, textvariable=ab_var, values=["Int", "Wis", "Cha", "Str", "Dex", "Con"], state="readonly", width=5).pack(side=tk.LEFT, padx=(2, 10))
 
-                    tk.Label(param_row, text="Save DC:", bg="#f5e6ce", font=self.body_bold).pack(side=tk.LEFT)
+                    tk.Label(param_row, text="Save DC:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
                     dc_var = tk.StringVar(value=str(sc_dict.get("custom_dc", 10)))
                     tk.Entry(param_row, textvariable=dc_var, width=4).pack(side=tk.LEFT, padx=(2, 10))
 
-                    tk.Label(param_row, text="To Hit:", bg="#f5e6ce", font=self.body_bold).pack(side=tk.LEFT)
+                    tk.Label(param_row, text="To Hit:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
                     hit_var = tk.StringVar(value=str(sc_dict.get("custom_hit", 2)))
                     tk.Entry(param_row, textvariable=hit_var, width=4).pack(side=tk.LEFT, padx=(2, 10))
 
-                    tk.Label(block, text="Header Template:", bg="#f5e6ce", font=self.body_italic).pack(anchor="w")
+                    tk.Label(block, text="Header Template:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(anchor="w")
                     hdr_text = tk.Text(block, height=3, font=self.body_font, wrap=tk.WORD)
                     hdr_text.insert("1.0", " ".join(sc_dict.get("headerEntries", [])))
                     hdr_text.pack(fill=tk.X, pady=(0, 5))
@@ -367,111 +386,118 @@ class StatBlockRenderer(tk.Frame):
                             lvl_str = str(lvl)
                             if lvl_str in spells_dict:
                                 lvl_data = spells_dict[lvl_str]
-                                row = tk.Frame(spells_frame, bg="#f5e6ce", pady=4)
+                                spells_list = lvl_data.setdefault("spells", [])
+                                if not spells_list:
+                                    continue
+                                    
+                                row = tk.Frame(spells_frame, bg="#f5e6ce", pady=8)
                                 row.pack(fill=tk.X)
-                                top_r = tk.Frame(row, bg="#f5e6ce")
-                                top_r.pack(fill=tk.X)
-                                tk.Label(top_r, text=f"Level {lvl}:", font=self.body_bold, bg="#f5e6ce", width=8, anchor="w").pack(side=tk.LEFT)
+                                tk.Label(row, text=f"Level {lvl}:", font=self.body_bold, bg="#f5e6ce", fg="black", width=8, anchor="w").pack(side=tk.LEFT)
                                 if lvl > 0:
-                                    tk.Label(top_r, text="Slots:", bg="#f5e6ce").pack(side=tk.LEFT)
-                                    se = tk.Entry(top_r, width=3)
+                                    tk.Label(row, text="Slots:", bg="#f5e6ce", fg="black").pack(side=tk.LEFT, padx=2)
+                                    se = tk.Entry(row, width=3)
                                     se.insert(0, str(lvl_data.get("slots", 0)))
                                     se.pack(side=tk.LEFT, padx=(0,10))
                                     slots_entries[lvl_str] = se
                                 
-                                spells_list = lvl_data.setdefault("spells", [])
-                                calculated_height = max(2, (len(spells_list) // 3) + 1)
-                                txt = tk.Text(row, height=calculated_height, bg="#f5e6ce", font=("Arial", 11), bd=0, wrap=tk.WORD, padx=4, pady=6)
-                                txt.pack(fill=tk.X, padx=10, pady=2, expand=True)
+                                txt_wrap = tk.Text(row, bg="#f5e6ce", font=("Arial", 14), bd=0, highlightthickness=0, wrap=tk.WORD, height=2)
+                                txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
                                 
                                 for s_idx, s_name in enumerate(spells_list):
-                                    sf = tk.Frame(txt, bg="#e8d5b7", padx=2, pady=2, bd=1, relief=tk.RAISED)
-                                    tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10)).pack(side=tk.LEFT)
+                                    sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
+                                    tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                    
                                     def make_spell_remover(level=lvl_str, index=s_idx):
                                         sync_all_sc()
                                         spells_dict[level]["spells"].pop(index)
-                                        if not spells_dict[level]["spells"]: del spells_dict[level]
+                                        if not spells_dict[level]["spells"]:
+                                            del spells_dict[level]
                                         rebuild_all_sc()
-                                    tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, pady=0, command=make_spell_remover).pack(side=tk.LEFT)
-                                    txt.window_create(tk.END, window=sf)
-                                    txt.insert(tk.END, "  ")
-                                txt.config(state=tk.DISABLED)
+                                        
+                                    tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, command=make_spell_remover).pack(side=tk.LEFT, padx=(4,0))
+                                    txt_wrap.window_create(tk.END, window=sf); txt_wrap.insert(tk.END, "  ")
+                                
+                                update_text_height(txt_wrap)
+                                txt_wrap.config(state=tk.DISABLED)
                     else:
-                        if "will" in sc_dict:
-                            row = tk.Frame(spells_frame, bg="#f5e6ce", pady=4)
+                        if "will" in sc_dict and sc_dict["will"]:
+                            row = tk.Frame(spells_frame, bg="#f5e6ce", pady=8)
                             row.pack(fill=tk.X)
-                            tk.Label(row, text="At will:", font=self.body_bold, bg="#f5e6ce", width=8, anchor="w").pack(anchor="w")
-                            w_list = sc_dict["will"]
-                            calculated_height = max(2, (len(w_list) // 3) + 1)
-                            txt = tk.Text(row, height=calculated_height, bg="#f5e6ce", font=("Arial", 11), bd=0, wrap=tk.WORD, padx=4, pady=6)
-                            txt.pack(fill=tk.X, padx=10, pady=2, expand=True)
-                            for s_idx, s_name in enumerate(w_list):
-                                sf = tk.Frame(txt, bg="#e8d5b7", padx=2, pady=2, bd=1, relief=tk.RAISED)
-                                tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10)).pack(side=tk.LEFT)
+                            tk.Label(row, text="At will:", font=self.body_bold, bg="#f5e6ce", fg="black", width=8, anchor="w").pack(side=tk.LEFT)
+                            txt_wrap = tk.Text(row, bg="#f5e6ce", font=("Arial", 14), bd=0, highlightthickness=0, wrap=tk.WORD, height=2)
+                            txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+                            for s_idx, s_name in enumerate(sc_dict["will"]):
+                                sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
+                                tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                
                                 def make_will_remover(index=s_idx):
                                     sync_all_sc()
                                     sc_dict["will"].pop(index)
                                     if not sc_dict["will"]: del sc_dict["will"]
                                     rebuild_all_sc()
-                                tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, pady=0, command=make_will_remover).pack(side=tk.LEFT)
-                                txt.window_create(tk.END, window=sf)
-                                txt.insert(tk.END, "  ")
-                            txt.config(state=tk.DISABLED)
+                                    
+                                tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, command=make_will_remover).pack(side=tk.LEFT, padx=(4,0))
+                                txt_wrap.window_create(tk.END, window=sf); txt_wrap.insert(tk.END, "  ")
+                            update_text_height(txt_wrap)
+                            txt_wrap.config(state=tk.DISABLED)
 
-                        daily_dict = sc_dict.setdefault("daily", {})
-                        for freq, spells_list in daily_dict.items():
-                            row = tk.Frame(spells_frame, bg="#f5e6ce", pady=4)
-                            row.pack(fill=tk.X)
-                            tk.Label(row, text=f"{freq}/day:", font=self.body_bold, bg="#f5e6ce", width=8, anchor="w").pack(anchor="w")
-                            calculated_height = max(2, (len(spells_list) // 3) + 1)
-                            txt = tk.Text(row, height=calculated_height, bg="#f5e6ce", font=("Arial", 11), bd=0, wrap=tk.WORD, padx=4, pady=6)
-                            txt.pack(fill=tk.X, padx=10, pady=2, expand=True)
-                            for s_idx, s_name in enumerate(spells_list):
-                                sf = tk.Frame(txt, bg="#e8d5b7", padx=2, pady=2, bd=1, relief=tk.RAISED)
-                                tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10)).pack(side=tk.LEFT)
-                                def make_daily_remover(f=freq, index=s_idx):
-                                    sync_all_sc()
-                                    daily_dict[f].pop(index)
-                                    if not daily_dict[f]: del daily_dict[f]
-                                    rebuild_all_sc()
-                                tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, pady=0, command=make_daily_remover).pack(side=tk.LEFT)
-                                txt.window_create(tk.END, window=sf)
-                                txt.insert(tk.END, "  ")
-                            txt.config(state=tk.DISABLED)
+                        if "daily" in sc_dict:
+                            for freq in list(sc_dict["daily"].keys()):
+                                if sc_dict["daily"][freq]:
+                                    spells_list = sc_dict["daily"][freq]
+                                    row = tk.Frame(spells_frame, bg="#f5e6ce", pady=8)
+                                    row.pack(fill=tk.X)
+                                    tk.Label(row, text=f"{freq}/day:", font=self.body_bold, bg="#f5e6ce", fg="black", width=8, anchor="w").pack(side=tk.LEFT)
+                                    txt_wrap = tk.Text(row, bg="#f5e6ce", font=("Arial", 14), bd=0, highlightthickness=0, wrap=tk.WORD, height=2)
+                                    txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+                                    for s_idx, s_name in enumerate(spells_list):
+                                        sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
+                                        tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                        
+                                        def make_daily_remover(f=freq, index=s_idx):
+                                            sync_all_sc()
+                                            sc_dict["daily"][f].pop(index)
+                                            if not sc_dict["daily"][f]: del sc_dict["daily"][f]
+                                            rebuild_all_sc()
+                                            
+                                        tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, command=make_daily_remover).pack(side=tk.LEFT, padx=(4,0))
+                                        txt_wrap.window_create(tk.END, window=sf); txt_wrap.insert(tk.END, "  ")
+                                    update_text_height(txt_wrap)
+                                    txt_wrap.config(state=tk.DISABLED)
 
                     def add_spell_to_block(block_ref=sc_dict):
                         def on_spell_selected(spell_data, freq=None):
                             sync_all_sc()
                             spell_name = spell_data["name"].lower()
-                            formatted_spell = f"{{@spell {spell_name}}}"
+                            formatted = f"{{@spell {spell_name}}}"
                             
-                            def is_dupe(arr): return any(formatted_spell.lower() == e.lower() for e in arr)
+                            def is_dupe(arr): return any(formatted.lower() == e.lower() for e in arr)
                             
                             if not is_innate_block:
                                 lvl = spell_data.get("level", 0)
-                                sdict = block_ref.setdefault("spells", {})
-                                ldict = sdict.setdefault(str(lvl), {"spells": []})
+                                ldict = block_ref.setdefault("spells", {}).setdefault(str(lvl), {"spells": []})
                                 if not is_dupe(ldict["spells"]):
-                                    ldict["spells"].append(formatted_spell)
-                                if lvl > 0 and "slots" not in ldict: ldict["slots"] = 1
-                                rebuild_all_sc()
+                                    ldict["spells"].append(formatted)
+                                    if lvl > 0 and "slots" not in ldict: ldict["slots"] = 1
                             else:
                                 if freq == "will": 
-                                    w_list = block_ref.setdefault("will", [])
-                                    if not is_dupe(w_list): w_list.append(formatted_spell)
+                                    if not is_dupe(block_ref.setdefault("will", [])): block_ref["will"].append(formatted)
                                 else: 
-                                    d_list = block_ref.setdefault("daily", {}).setdefault(freq, [])
-                                    if not is_dupe(d_list): d_list.append(formatted_spell)
-                                rebuild_all_sc()
+                                    if not is_dupe(block_ref.setdefault("daily", {}).setdefault(freq, [])): block_ref["daily"][freq].append(formatted)
+                            rebuild_all_sc()
                         SpellSearchDialog(self, self.spells_index, is_innate_block, on_spell_selected)
 
                     tk.Button(block, text="+ Add Spell", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=add_spell_to_block).pack(pady=5)
                     self.sc_refs.append((sc_dict, hdr_text, ab_var, dc_var, hit_var, slots_entries))
                     
                 btn_add_sc.config(state=tk.DISABLED if has_matching else tk.NORMAL)
-            
+
+                # Collapse canvas geometry limits synchronously inside reconstruction passes
+                self.edit_inner.update()
+                self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
             self.rebuild_sc_hooks.append(rebuild_local_sc)
-            
+
             def add_sc_block():
                 name = self.edit_refs["name"].get().strip() or "creature"
                 if sc_type == "slots":
@@ -487,7 +513,8 @@ class StatBlockRenderer(tk.Frame):
                         "ability": "int", "custom_dc": 10, "custom_hit": 2, "displayAs": "action"
                     })
                 rebuild_all_sc()
-            btn_add_sc.config(command=add_sc_block)
+        
+            btn_add_sc.config(command=lambda: (add_sc_block(), rebuild_all_sc()))
 
         items_container = tk.Frame(sec_frame, bg="#fdf1dc")
         items_container.pack(fill=tk.X)
@@ -499,7 +526,7 @@ class StatBlockRenderer(tk.Frame):
             top = tk.Frame(item_frame, bg="#f5e6ce")
             top.pack(fill=tk.X)
             
-            tk.Label(top, text="Name:", bg="#f5e6ce", font=self.body_bold).pack(side=tk.LEFT)
+            tk.Label(top, text="Name:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
             name_entry = tk.Entry(top, width=30, font=self.body_font)
             name_entry.insert(0, name)
             name_entry.pack(side=tk.LEFT, padx=5)
@@ -527,7 +554,7 @@ class StatBlockRenderer(tk.Frame):
                 dmg_type_val = dmg_m2.group(2).strip()
                 entries_str = entries_str.replace(dmg_m2.group(0), "{@attack_dmg}")
             elif "{@h}" in entries_str:
-                dmg_m3 = re.search(r'{@h}(.*?)(?=\s+[a-zA-Z])', entries_str)
+                dmg_m3 = re.search(r'{@h}(.*?)(w+ [a-zA-Z])', entries_str)
                 if dmg_m3:
                     dmg_form_val = dmg_m3.group(1).strip()
                     entries_str = entries_str.replace(f"{{@h}}{dmg_form_val}", "{@attack_dmg}")
@@ -541,7 +568,7 @@ class StatBlockRenderer(tk.Frame):
                     entries_str = entries_str[len(tag):].lstrip()
                     break
                     
-            tk.Label(top, text="Attack Type:", bg="#f5e6ce", font=self.body_bold).pack(side=tk.LEFT, padx=(15, 2))
+            tk.Label(top, text="Attack Type:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=(15, 2))
             atk_var = tk.StringVar(value=found_atk)
             atk_cb = ttk.Combobox(top, textvariable=atk_var, values=list(utils.ATTACK_TAGS.keys()), state="readonly", width=18)
             atk_cb.pack(side=tk.LEFT, padx=5)
@@ -549,32 +576,35 @@ class StatBlockRenderer(tk.Frame):
             def remove_item():
                 item_frame.destroy()
                 self.array_refs[key].remove((name_entry, atk_var, desc_text, hit_en, reach_en, dmg_form_en, dmg_type_en))
+                self.edit_inner.update()
+                self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+                
             tk.Button(top, text="X Remove", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=remove_item).pack(side=tk.RIGHT)
             
             atk_params_frame = tk.Frame(item_frame, bg="#f5e6ce")
             atk_params_frame.pack(fill=tk.X, pady=2)
             
-            tk.Label(atk_params_frame, text="Hit Mod:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            tk.Label(atk_params_frame, text="Hit Mod:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
             hit_en = tk.Entry(atk_params_frame, width=5)
             hit_en.insert(0, hit_val)
             hit_en.pack(side=tk.LEFT, padx=(2, 10))
             
-            tk.Label(atk_params_frame, text="Reach:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            tk.Label(atk_params_frame, text="Reach:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
             reach_en = tk.Entry(atk_params_frame, width=8)
             reach_en.insert(0, reach_val)
             reach_en.pack(side=tk.LEFT, padx=(2, 10))
             
-            tk.Label(atk_params_frame, text="Dmg Formula:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            tk.Label(atk_params_frame, text="Dmg Formula:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
             dmg_form_en = tk.Entry(atk_params_frame, width=8)
             dmg_form_en.insert(0, dmg_form_val)
             dmg_form_en.pack(side=tk.LEFT, padx=(2, 10))
             
-            tk.Label(atk_params_frame, text="Dmg Type:", bg="#f5e6ce", font=self.body_italic).pack(side=tk.LEFT)
+            tk.Label(atk_params_frame, text="Dmg Type:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
             dmg_type_en = tk.Entry(atk_params_frame, width=12)
             dmg_type_en.insert(0, dmg_type_val)
             dmg_type_en.pack(side=tk.LEFT, padx=(2, 10))
 
-            tk.Label(item_frame, text="Description / Entries:", bg="#f5e6ce", font=self.body_italic).pack(anchor="w", pady=(5,0))
+            tk.Label(item_frame, text="Description / Entries:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(anchor="w", pady=(5,0))
             desc_text = tk.Text(item_frame, height=4, font=self.body_font, wrap=tk.WORD)
             desc_text.insert("1.0", entries_str)
             desc_text.pack(fill=tk.X)
@@ -668,7 +698,18 @@ class StatBlockRenderer(tk.Frame):
             if isinstance(entry, str): out += utils.clean_5etools_text(entry) + "\n"
             elif isinstance(entry, dict):
                 if entry.get("type") == "list":
-                    for item in entry.get("items", []): out += f"• {self.extract_entries([item]).strip()}\n"
+                    for item in entry.get("items", []): 
+                        out += f"• {self.extract_entries([item]).strip()}\n"
+                elif entry.get("type") == "item" or "entry" in entry:
+                    item_str = ""
+                    if "name" in entry:
+                        item_str += f"{utils.clean_5etools_text(entry['name'])}. "
+                    if "entry" in entry:
+                        if isinstance(entry["entry"], str):
+                            item_str += utils.clean_5etools_text(entry["entry"])
+                        elif isinstance(entry["entry"], list):
+                            item_str += self.extract_entries(entry["entry"]).strip()
+                    out += item_str + "\n"
                 elif "entries" in entry:
                     if "name" in entry: out += f"{utils.clean_5etools_text(entry['name'])}. "
                     out += self.extract_entries(entry["entries"])
@@ -714,7 +755,7 @@ class StatBlockRenderer(tk.Frame):
 
         for sc in spellcasting_list:
             name = utils.clean_5etools_text(sc.get("name", "Spellcasting"))
-            self.text.insert(tk.END, f"{name}\n", "bold") 
+            self.text.insert(tk.END, f"{name}. ", "bold") 
             
             headers = sc.get("headerEntries", [])
             formatted_headers = []
@@ -732,17 +773,17 @@ class StatBlockRenderer(tk.Frame):
                 formatted_headers.append(h)
                 
             header_text = " ".join([utils.clean_5etools_text(h) for h in formatted_headers])
-            self.insert_text_with_links(f"{header_text}\n", "body_indented")
+            self.insert_text_with_links(f"{header_text}\n", "body")
             
             if "will" in sc:
                 spells = ", ".join([utils.clean_5etools_text(s) for s in sc["will"]])
-                self.insert_text_with_links(f"At will: {spells}\n", "body_indented")
+                self.insert_text_with_links(f"• At will: {spells}\n", "body_indented")
             if "daily" in sc:
                 for freq, spells_list in sc["daily"].items():
                     freq_num = freq[0]
                     each = " each" if freq.endswith("e") else ""
                     spells = ", ".join([utils.clean_5etools_text(s) for s in spells_list])
-                    self.insert_text_with_links(f"{freq_num}/day{each}: {spells}\n", "body_indented")
+                    self.insert_text_with_links(f"• {freq_num}/day{each}: {spells}\n", "body_indented")
             if "spells" in sc:
                 levels = {"0": "Cantrips (at will)", "1": "1st level", "2": "2nd level", "3": "3rd level", "4": "4th level", "5": "5th level", "6": "6th level", "7": "7th level", "8": "8th level", "9": "9th level"}
                 for level in range(10):
@@ -753,7 +794,7 @@ class StatBlockRenderer(tk.Frame):
                         slots = level_data.get("slots")
                         if slots: lvl_str += f" ({slots} slots)"
                         spells = ", ".join([utils.clean_5etools_text(s) for s in level_data.get("spells", [])])
-                        self.insert_text_with_links(f"{lvl_str}: {spells}\n", "body_indented")
+                        self.insert_text_with_links(f"• {lvl_str}: {spells}\n", "body_indented")
             self.text.insert(tk.END, "\n")
 
     def _render_section(self, entries_list):
@@ -761,9 +802,9 @@ class StatBlockRenderer(tk.Frame):
         if not entries_list: return
         for item in entries_list:
             name = item.get("name", "")
-            if name: self.text.insert(tk.END, f"{utils.clean_5etools_text(name)}\n", "bold")
+            if name: self.text.insert(tk.END, f"{utils.clean_5etools_text(name)}. ", "bold")
             content = self.extract_entries(item.get("entries", []))
-            self.insert_text_with_links(content, "body_indented")
+            self.insert_text_with_links(content, "body")
             self.text.insert(tk.END, "\n")
 
     def render_monster(self, data, back_cb=None):
@@ -771,11 +812,6 @@ class StatBlockRenderer(tk.Frame):
         self.clear_overlays()
         self.edit_container.pack_forget()
         self.view_container.pack(fill=tk.BOTH, expand=True)
-
-        if back_cb:
-            btn_back = tk.Button(self.view_container, text="BACK", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=back_cb)
-            btn_back.place(relx=1.0, x=-100, y=10, width=80, height=30)
-            self.overlay_buttons.append(btn_back)
 
         self.text.config(state=tk.NORMAL)
         self.text.delete("1.0", tk.END)
@@ -807,7 +843,6 @@ class StatBlockRenderer(tk.Frame):
         ac = data.get("ac", [10])[0]
         if isinstance(ac, dict):
             ac_val = str(ac.get("ac", ""))
-            # FIXED: Corrected self.clean_5etools_text to utils.clean_5etools_text
             if "from" in ac: ac_val += f" ({utils.clean_5etools_text(', '.join(ac['from']))})"
         else: ac_val = str(ac)
             
@@ -878,10 +913,10 @@ class StatBlockRenderer(tk.Frame):
             for d in dialogues:
                 self.text.insert(tk.END, f"{utils.clean_5etools_text(d.get('name', 'Dialogue'))}\n", "bold")
                 loc = d.get('location', '')
-                if loc: self.text.insert(tk.END, f"{loc}\n", "body_italic")
                 time_val = d.get('time', '')
-                if time_val: self.text.insert(tk.END, f"{time_val}\n", "body_italic")
-                self.insert_text_with_links(self.extract_entries(d.get("entries", [])), "body_indented")
+                if loc or time_val:
+                    self.text.insert(tk.END, f"Location: {loc} | Event: {time_val}\n", "body")
+                self.insert_text_with_links(self.extract_entries(d.get("entries", [])), "body")
                 self.text.insert(tk.END, "\n")
 
         sc_data = data.get("spellcasting", [])
@@ -921,16 +956,11 @@ class StatBlockRenderer(tk.Frame):
 
         self.text.config(state=tk.DISABLED)
 
-    def render_spell(self, data, back_cb=None):
+    def render_spell(self, data, back_callback=None):
         import utils
         self.clear_overlays()
         self.edit_container.pack_forget()
         self.view_container.pack(fill=tk.BOTH, expand=True)
-
-        if back_cb:
-            btn_back = tk.Button(self.view_container, text="BACK", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=back_cb)
-            btn_back.place(relx=1.0, x=-100, y=10, width=80, height=30)
-            self.overlay_buttons.append(btn_back)
 
         self.text.config(state=tk.NORMAL)
         self.text.delete("1.0", tk.END)
@@ -1108,6 +1138,355 @@ class StatBlockRenderer(tk.Frame):
         
         save_cb(self.original_spell_name, d)
 
+    def _on_spell_click(self, event):
+        idx = self.text.index(f"@{event.x},{event.y}")
+        for t in self.text.tag_names(idx):
+            if t.startswith("SPELL_TAG:"):
+                if self.spell_callback: self.spell_callback(t.split(":", 1)[1])
+                break
+            elif t.startswith("LOC_MON_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Monsters")
+                break
+            elif t.startswith("LOC_NPC_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "NPCs")
+                break
+            elif t.startswith("LOC_COMBAT_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Combats")
+                break
+            elif t.startswith("LOC_EVT_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Events")
+                break
+            elif t.startswith("LOC_CONN_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Locations")
+                break
+
+    def set_location_link_callback(self, cb):
+        self.location_link_callback = cb
+
+    def add_location_top_buttons(self, l_dir, edit_cb):
+        self.clear_overlays()
+        b_edit = tk.Button(self.view_container, text="EDIT", bg="#8a8a8a", fg="white", font=("Georgia", 10, "bold"), command=lambda: edit_cb(l_dir))
+        b_edit.place(relx=1.0, x=-100, y=10, width=80, height=30)
+        self.overlay_buttons.append(b_edit)
+
+    def render_location(self, data, back_cb=None):
+        self.clear_overlays()
+        self.edit_container.pack_forget()
+        self.view_container.pack(fill=tk.BOTH, expand=True)
+
+        self.text.config(state=tk.NORMAL)
+        self.text.delete("1.0", tk.END)
+        self.dividers.clear()
+
+        self.text.insert(tk.END, data.get("name", "Unknown Location") + "\n", "title")
+        self.insert_divider()
+
+        desc = data.get("description", "")
+        if desc:
+            self.text.insert(tk.END, desc + "\n\n", "body")
+            self.insert_divider()
+
+        sections = [
+            ("monsters", "MONSTERS", "LOC_MON_TAG"),
+            ("npcs", "NPCs", "LOC_NPC_TAG"),
+            ("combats", "COMBATS", "LOC_COMBAT_TAG"),
+            ("events", "RELATED EVENTS", "LOC_EVT_TAG")
+        ]
+        for key, heading, tag_prefix in sections:
+            items = data.get(key, [])
+            if items:
+                self.text.insert(tk.END, f"{heading}\n", "section_header")
+                self.insert_divider()
+                for item in items:
+                    name = item if isinstance(item, str) else item.get("name", "")
+                    self.text.insert(tk.END, "• ")
+                    self.text.insert(tk.END, name, ("spell_link", f"{tag_prefix}:{name}"))
+                    self.text.insert(tk.END, "\n", "body")
+                self.text.insert(tk.END, "\n")
+
+        connections = data.get("connections", [])
+        if connections:
+            self.text.insert(tk.END, "CONNECTED LOCATIONS\n", "section_header")
+            self.insert_divider()
+            for conn in connections:
+                target = conn.get("target", "")
+                c_desc = conn.get("description", "")
+                self.text.insert(tk.END, "• ")
+                self.text.insert(tk.END, target, ("spell_link", f"LOC_CONN_TAG:{target}"))
+                if c_desc:
+                    self.text.insert(tk.END, f" — {c_desc}", "body")
+                self.text.insert(tk.END, "\n", "body")
+            self.text.insert(tk.END, "\n")
+
+        self.text.config(state=tk.DISABLED)
+
+    def render_event(self, data, back_cb=None):
+        self.clear_overlays()
+        self.edit_container.pack_forget()
+        self.view_container.pack(fill=tk.BOTH, expand=True)
+
+        self.text.config(state=tk.NORMAL)
+        self.text.delete("1.0", tk.END)
+        self.dividers.clear()
+
+        self.text.insert(tk.END, data.get("name", "Unknown Event") + "\n", "title")
+        self.insert_divider()
+
+        desc = data.get("description", "")
+        if desc:
+            self.text.insert(tk.END, desc + "\n\n", "body")
+            self.insert_divider()
+
+        sections = [
+            ("monsters", "MONSTERS", "LOC_MON_TAG"),
+            ("npcs", "NPCs", "LOC_NPC_TAG"),
+            ("combats", "COMBATS", "LOC_COMBAT_TAG"),
+            ("locations", "LOCATIONS", "LOC_CONN_TAG")
+        ]
+        for key, heading, tag_prefix in sections:
+            items = data.get(key, [])
+            if items:
+                self.text.insert(tk.END, f"{heading}\n", "section_header")
+                self.insert_divider()
+                for item in items:
+                    name = item if isinstance(item, str) else item.get("name", "")
+                    self.text.insert(tk.END, "• ")
+                    self.text.insert(tk.END, name, ("spell_link", f"{tag_prefix}:{name}"))
+                    self.text.insert(tk.END, "\n", "body")
+                self.text.insert(tk.END, "\n")
+
+        connections = data.get("connections", [])
+        if connections:
+            self.text.insert(tk.END, "CONNECTED EVENTS\n", "section_header")
+            self.insert_divider()
+            for conn in connections:
+                target = conn.get("target", "")
+                c_desc = conn.get("description", "")
+                self.text.insert(tk.END, "• ")
+                self.text.insert(tk.END, target, ("spell_link", f"LOC_EVT_TAG:{target}"))
+                if c_desc:
+                    self.text.insert(tk.END, f" — {c_desc}", "body")
+                self.text.insert(tk.END, "\n", "body")
+            self.text.insert(tk.END, "\n")
+
+        self.text.config(state=tk.DISABLED)
+
+    def render_location_edit_mode(self, data, location_dir, save_callback, cancel_callback, 
+                                  add_new_monster_cb, add_existing_monster_cb, add_existing_npc_cb, add_existing_combat_cb, add_existing_event_cb, add_connection_cb):
+        self.clear_overlays()
+        self.view_container.pack_forget()
+        self.edit_container.pack(fill=tk.BOTH, expand=True)
+        for widget in self.edit_inner.winfo_children(): widget.destroy()
+
+        self.edit_data = copy.deepcopy(data)
+        for k in ["monsters", "npcs", "combats", "events", "connections"]:
+            self.edit_data.setdefault(k, [])
+
+        top_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
+        top_frame.pack(fill=tk.X, pady=(0, 20))
+        tk.Label(top_frame, text="EDIT LOCATION PROFILE", font=self.header_font, fg="#58180d", bg="#fdf1dc").pack(side=tk.LEFT)
+        
+        monster_items, npc_items, combat_items, event_items, connection_items = [], [], [], [], []
+
+        def handle_save():
+            self.edit_data["name"] = name_entry.get().strip()
+            self.edit_data["description"] = desc_text.get("1.0", "end-1c").strip()
+            self.edit_data["monsters"] = [m["name"] for m in monster_items]
+            self.edit_data["npcs"] = [n["name"] for n in npc_items]
+            self.edit_data["combats"] = [c["name"] for c in combat_items]
+            self.edit_data["events"] = [e["name"] for e in event_items]
+            self.edit_data["connections"] = [{"target": c["target"], "description": c["desc_entry"].get().strip()} for c in connection_items]
+            save_callback(location_dir, self.edit_data)
+
+        tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=handle_save).pack(side=tk.RIGHT, padx=5)
+        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=cancel_callback).pack(side=tk.RIGHT, padx=5)
+
+        basic_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
+        basic_frame.pack(fill=tk.X, pady=10)
+        
+        tk.Label(basic_frame, text="Name:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=0, sticky="e", padx=5, pady=2)
+        name_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
+        name_entry.insert(0, self.edit_data.get("name", location_dir.name))
+        name_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+
+        tk.Label(basic_frame, text="Description:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=1, column=0, sticky="ne", padx=5, pady=2)
+        desc_text = tk.Text(basic_frame, width=60, height=4, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        desc_text.insert("1.0", self.edit_data.get("description", ""))
+        desc_text.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        def make_section(title_text):
+            sec_frame = tk.Frame(self.edit_inner, bg="#fdf1dc", pady=5)
+            sec_frame.pack(fill=tk.X)
+            hdr_frame = tk.Frame(sec_frame, bg="#fdf1dc")
+            hdr_frame.pack(fill=tk.X)
+            tk.Label(hdr_frame, text=title_text, font=self.body_bold, bg="#fdf1dc", fg="#7a200d").pack(side=tk.LEFT)
+            list_frame = tk.Frame(sec_frame, bg="#fdf1dc")
+            list_frame.pack(fill=tk.X)
+            return hdr_frame, list_frame
+
+        def draw_simple_row(list_frame, name, storage_list, bg_color="#e0cbb0"):
+            row = tk.Frame(list_frame, bg=bg_color, pady=4, padx=10, bd=1, relief=tk.SOLID)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=name, font=self.body_bold, bg=bg_color, fg="black").pack(side=tk.LEFT)
+            item_dict = {"name": name, "frame": row}
+            storage_list.append(item_dict)
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.destroy(), storage_list.remove(item_dict), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            self.edit_inner.update()
+            self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
+        def draw_connection_row(list_frame, target, description="", bg_color="#f5e6ce"):
+            row = tk.Frame(list_frame, bg=bg_color, pady=6, padx=10, bd=1, relief=tk.SOLID)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=f"Route To: {target}", font=self.body_bold, bg=bg_color, fg="black").pack(side=tk.LEFT, padx=5)
+            tk.Label(row, text="Connection Info:", font=self.body_italic, bg=bg_color, fg="black").pack(side=tk.LEFT, padx=(15, 2))
+            desc_en = tk.Entry(row, width=35, font=self.body_font)
+            desc_en.insert(0, description)
+            desc_en.pack(side=tk.LEFT, padx=5)
+            item_dict = {"target": target, "desc_entry": desc_en, "frame": row}
+            connection_items.append(item_dict)
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.destroy(), connection_items.remove(item_dict), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            self.edit_inner.update()
+            self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
+        m_hdr, m_lst = make_section("Monsters:")
+        tk.Button(m_hdr, text="+ New", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_new_monster_cb(lambda n: draw_simple_row(m_lst, n, monster_items))).pack(side=tk.LEFT, padx=5)
+        tk.Button(m_hdr, text="+ Existing", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_monster_cb(lambda n: draw_simple_row(m_lst, n, monster_items))).pack(side=tk.LEFT, padx=2)
+        for m in self.edit_data.get("monsters", []): draw_simple_row(m_lst, m, monster_items)
+
+        n_hdr, n_lst = make_section("NPCs:")
+        tk.Button(n_hdr, text="+ Add NPC", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_npc_cb(lambda n: draw_simple_row(n_lst, n, npc_items))).pack(side=tk.LEFT, padx=5)
+        for n in self.edit_data.get("npcs", []): draw_simple_row(n_lst, n, npc_items)
+
+        c_hdr, c_lst = make_section("Combats:")
+        tk.Button(c_hdr, text="+ Add Combat", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_combat_cb(lambda n: draw_simple_row(c_lst, n, combat_items))).pack(side=tk.LEFT, padx=5)
+        for c in self.edit_data.get("combats", []): draw_simple_row(c_lst, c, combat_items)
+
+        e_hdr, e_lst = make_section("Related Events:")
+        tk.Button(e_hdr, text="+ Add Event", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_event_cb(lambda n: draw_simple_row(e_lst, n, event_items))).pack(side=tk.LEFT, padx=5)
+        for e in self.edit_data.get("events", []): draw_simple_row(e_lst, e, event_items)
+
+        conn_hdr, conn_lst = make_section("Connected Map Locations:")
+        tk.Button(conn_hdr, text="+ Add Connection", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_connection_cb(lambda target: draw_connection_row(conn_lst, target))).pack(side=tk.LEFT, padx=5)
+        for conn in self.edit_data.get("connections", []): draw_connection_row(conn_lst, conn.get("target", ""), conn.get("description", ""))
+
+        self.edit_inner.update()
+        self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
+    def render_event_edit_mode(self, data, event_dir, save_callback, cancel_callback, 
+                               add_new_monster_cb, add_existing_monster_cb, add_existing_npc_cb, add_existing_combat_cb, add_existing_location_cb, add_connection_cb):
+        self.clear_overlays()
+        self.view_container.pack_forget()
+        self.edit_container.pack(fill=tk.BOTH, expand=True)
+        for widget in self.edit_inner.winfo_children(): widget.destroy()
+
+        self.edit_data = copy.deepcopy(data)
+        for k in ["monsters", "npcs", "combats", "locations", "connections"]:
+            self.edit_data.setdefault(k, [])
+
+        top_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
+        top_frame.pack(fill=tk.X, pady=(0, 20))
+        tk.Label(top_frame, text="EDIT EVENT PROFILE", font=self.header_font, fg="#58180d", bg="#fdf1dc").pack(side=tk.LEFT)
+        
+        monster_items, npc_items, combat_items, location_items, connection_items = [], [], [], [], []
+
+        def handle_save():
+            self.edit_data["name"] = name_entry.get().strip()
+            self.edit_data["description"] = desc_text.get("1.0", "end-1c").strip()
+            self.edit_data["monsters"] = [m["name"] for m in monster_items]
+            self.edit_data["npcs"] = [n["name"] for n in npc_items]
+            self.edit_data["combats"] = [c["name"] for c in combat_items]
+            self.edit_data["locations"] = [l["name"] for l in location_items]
+            self.edit_data["connections"] = [{"target": c["target"], "description": c["desc_entry"].get().strip()} for c in connection_items]
+            save_callback(event_dir, self.edit_data)
+
+        tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=handle_save).pack(side=tk.RIGHT, padx=5)
+        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=cancel_callback).pack(side=tk.RIGHT, padx=5)
+
+        basic_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
+        basic_frame.pack(fill=tk.X, pady=10)
+        
+        tk.Label(basic_frame, text="Name:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=0, sticky="e", padx=5, pady=2)
+        name_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
+        name_entry.insert(0, self.edit_data.get("name", event_dir.name))
+        name_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+
+        tk.Label(basic_frame, text="Description:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=1, column=0, sticky="ne", padx=5, pady=2)
+        desc_text = tk.Text(basic_frame, width=60, height=4, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        desc_text.insert("1.0", self.edit_data.get("description", ""))
+        desc_text.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        def make_section(title_text):
+            sec_frame = tk.Frame(self.edit_inner, bg="#fdf1dc", pady=5)
+            sec_frame.pack(fill=tk.X)
+            hdr_frame = tk.Frame(sec_frame, bg="#fdf1dc")
+            hdr_frame.pack(fill=tk.X)
+            tk.Label(hdr_frame, text=title_text, font=self.body_bold, bg="#fdf1dc", fg="#7a200d").pack(side=tk.LEFT)
+            list_frame = tk.Frame(sec_frame, bg="#fdf1dc")
+            list_frame.pack(fill=tk.X)
+            return hdr_frame, list_frame
+
+        def draw_simple_row(list_frame, name, storage_list, bg_color="#e0cbb0"):
+            row = tk.Frame(list_frame, bg=bg_color, pady=4, padx=10, bd=1, relief=tk.SOLID)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=name, font=self.body_bold, bg=bg_color, fg="black").pack(side=tk.LEFT)
+            item_dict = {"name": name, "frame": row}
+            storage_list.append(item_dict)
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.destroy(), storage_list.remove(item_dict), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            self.edit_inner.update()
+            self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
+        # MODIFIED: Text changed from "Route To" to "Related to:" for Event entries
+        def draw_connection_row(list_frame, target, description="", bg_color="#f5e6ce"):
+            row = tk.Frame(list_frame, bg=bg_color, pady=6, padx=10, bd=1, relief=tk.SOLID)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=f"Related to: {target}", font=self.body_bold, bg=bg_color, fg="black").pack(side=tk.LEFT, padx=5)
+            tk.Label(row, text="Connection Info:", font=self.body_italic, bg=bg_color, fg="black").pack(side=tk.LEFT, padx=(15, 2))
+            desc_en = tk.Entry(row, width=35, font=self.body_font)
+            desc_en.insert(0, description)
+            desc_en.pack(side=tk.LEFT, padx=5)
+            item_dict = {"target": target, "desc_entry": desc_en, "frame": row}
+            connection_items.append(item_dict)
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.destroy(), connection_items.remove(item_dict), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            self.edit_inner.update()
+            self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
+        # Monsters
+        m_hdr, m_lst = make_section("Monsters:")
+        tk.Button(m_hdr, text="+ New", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_new_monster_cb(lambda n: draw_simple_row(m_lst, n, monster_items))).pack(side=tk.LEFT, padx=5)
+        tk.Button(m_hdr, text="+ Existing", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_monster_cb(lambda n: draw_simple_row(m_lst, n, monster_items))).pack(side=tk.LEFT, padx=2)
+        for m in self.edit_data.get("monsters", []): draw_simple_row(m_lst, m, monster_items)
+
+        # NPCs
+        n_hdr, n_lst = make_section("NPCs:")
+        tk.Button(n_hdr, text="+ Add NPC", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_npc_cb(lambda n: draw_simple_row(n_lst, n, npc_items))).pack(side=tk.LEFT, padx=5)
+        for n in self.edit_data.get("npcs", []): draw_simple_row(n_lst, n, npc_items)
+
+        # Combats
+        c_hdr, c_lst = make_section("Combats:")
+        tk.Button(c_hdr, text="+ Add Combat", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_combat_cb(lambda n: draw_simple_row(c_lst, n, combat_items))).pack(side=tk.LEFT, padx=5)
+        for c in self.edit_data.get("combats", []): draw_simple_row(c_lst, c, combat_items)
+
+        # Locations
+        l_hdr, l_lst = make_section("Locations:")
+        tk.Button(l_hdr, text="+ Add Location", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_existing_location_cb(lambda n: draw_simple_row(l_lst, n, location_items))).pack(side=tk.LEFT, padx=5)
+        for l in self.edit_data.get("locations", []): draw_simple_row(l_lst, l, location_items)
+
+        # Connected Events
+        conn_hdr, conn_lst = make_section("Connected Events:")
+        tk.Button(conn_hdr, text="+ Add Connection", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: add_connection_cb(lambda target: draw_connection_row(conn_lst, target))).pack(side=tk.LEFT, padx=5)
+        for conn in self.edit_data.get("connections", []): draw_connection_row(conn_lst, conn.get("target", ""), conn.get("description", ""))
+
+        self.edit_inner.update()
+        self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+
+    # Mapping Event actions symmetrically using the specialized inline location layout engine
+    def add_event_top_buttons(self, e_dir, edit_cb): self.add_location_top_buttons(e_dir, edit_cb)
+
 class CombatRenderer(tk.Frame):
     def __init__(self, parent, open_statblock_cb, save_cb, add_bestiary_cb, add_camp_mon_cb, add_camp_npc_cb, cancel_cb, *args, **kwargs):
         super().__init__(parent, bg="#fdf1dc", *args, **kwargs)
@@ -1171,10 +1550,13 @@ class CombatRenderer(tk.Frame):
             p["hp"] = int(h_val) if h_val.lstrip('-').isdigit() else 0
 
     def _realtime_sort(self, event=None):
-        """Re-orders combat panels dynamically using pack order sorting to maintain keyboard input focus."""
-        # Capture the widget that currently has active focus before altering layout structure
-        focused_widget = self.focus_get()
-        
+        """Re-orders combat panels dynamically."""
+        # Use a safe focus getter to avoid KeyError on internal popdown widgets
+        try:
+            focused_widget = self.focus_get()
+        except:
+            focused_widget = None
+            
         self._sync_all_rows()
         
         self.participant_rows.sort(key=lambda r: r["data"].get("init", 0), reverse=True)
@@ -1185,10 +1567,12 @@ class CombatRenderer(tk.Frame):
         for r in self.participant_rows:
             r["frame"].pack(fill=tk.X, pady=4)
             
-        # FIXED: Explicitly restore focus state back to the original entry field to allow seamless typing
-        if focused_widget:
-            try: focused_widget.focus_set()
-            except: pass
+        # Only restore focus if the widget still exists in the hierarchy
+        if focused_widget and focused_widget.winfo_exists():
+            try:
+                focused_widget.focus_set()
+            except:
+                pass
 
     def _redraw_workspace(self):
         for w in self.main_inner.winfo_children(): w.destroy()
@@ -1205,12 +1589,8 @@ class CombatRenderer(tk.Frame):
             self.save_cb(self.combat_dir, self.current_data)
             self._redraw_workspace()
 
-        def cancel_action():
-            self.current_data = copy.deepcopy(self.original_data)
-            self.cancel_cb()
-
         tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=save_action).pack(side=tk.RIGHT, padx=5)
-        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=cancel_action).pack(side=tk.RIGHT, padx=5)
+        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=self.cancel_cb).pack(side=tk.RIGHT, padx=5)
 
         fields_f = tk.Frame(self.main_inner, bg="#fdf1dc")
         fields_f.pack(fill=tk.X, pady=10)

@@ -88,20 +88,43 @@ class SpellSearchDialog(tk.Toplevel):
             btn.pack(side=tk.LEFT, padx=2, pady=2)
 
     def open_filter_dialog(self):
-        d = tk.Toplevel(self); d.title("Build Filter"); d.geometry("460x550"); d.configure(bg="#fdf1dc")
-        logic_var = tk.StringVar(value="AND")
-        btn_logic = tk.Button(d, text="AND", bg="#ff4d4d", fg="white", font=("Arial", 12, "bold"), width=10, command=lambda: (logic_var.set("OR") if logic_var.get() == "AND" else logic_var.set("AND"), btn_logic.config(text=logic_var.get(), bg="#4a90e2" if logic_var.get() == "OR" else "#ff4d4d")))
-        btn_logic.pack(pady=5)
+        d = tk.Toplevel(self); d.title("Build Filter"); d.geometry("450x600"); d.configure(bg="#fdf1dc")
         
-        f = tk.Frame(d, bg="#fdf1dc"); f.pack(fill=tk.BOTH, expand=True, padx=20)
-        min_v = tk.Scale(f, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=150)
-        min_v.grid(row=0, column=1)
-        max_v = tk.Scale(f, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=150); max_v.set(12)
-        max_v.grid(row=1, column=1)
-        sch_v = ttk.Combobox(f, values=["All"] + list(utils.SCHOOL_MAP.values()), state="readonly", width=18); sch_v.set("All"); sch_v.grid(row=2, column=1)
-        dmg_v = ttk.Combobox(f, values=["All", "Acid", "Bludgeoning", "Cold", "Fire", "Force", "Lightning", "Necrotic", "Piercing", "Poison", "Psychic", "Radiant", "Slashing", "Thunder"], state="readonly", width=18); dmg_v.set("All"); dmg_v.grid(row=3, column=1)
-        save_v = ttk.Combobox(f, values=["All", "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"], state="readonly", width=18); save_v.set("All"); save_v.grid(row=4, column=1)
-        conc_v = ttk.Combobox(f, values=["All", "Yes", "No"], state="readonly", width=18); conc_v.set("All"); conc_v.grid(row=5, column=1)
+        logic_var = tk.StringVar(value="AND")
+        btn_logic = tk.Button(d, text="AND", bg="#ff4d4d", fg="white", font=("Arial", 12, "bold"), width=10, 
+                              command=lambda: (logic_var.set("OR") if logic_var.get() == "AND" else logic_var.set("AND"), 
+                                               btn_logic.config(text=logic_var.get(), bg="#4a90e2" if logic_var.get() == "OR" else "#ff4d4d")))
+        btn_logic.pack(pady=15)
+        
+        f = tk.Frame(d, bg="#fdf1dc")
+        f.pack(anchor="center", padx=20, pady=10)
+        
+        row_idx = 0
+        def create_field(label_text, widget_class, **kwargs):
+            nonlocal row_idx
+            lbl = tk.Label(f, text=label_text, bg="#fdf1dc", fg="black", font=("Arial", 10, "bold"), width=16, anchor="e")
+            lbl.grid(row=row_idx, column=0, padx=(0, 15), pady=8, sticky="e")
+            
+            w = widget_class(f, **kwargs)
+            w.grid(row=row_idx, column=1, pady=8, sticky="w")
+            row_idx += 1
+            return w
+
+        min_v = create_field("Minimum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
+        max_v = create_field("Maximum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
+        max_v.set(12)
+        
+        sch_v = create_field("School:", ttk.Combobox, values=["All"] + list(utils.SCHOOL_MAP.values()), state="readonly", width=22)
+        sch_v.set("All")
+        
+        dmg_v = create_field("Damage Type:", ttk.Combobox, values=["All", "Acid", "Bludgeoning", "Cold", "Fire", "Force", "Lightning", "Necrotic", "Piercing", "Poison", "Psychic", "Radiant", "Slashing", "Thunder"], state="readonly", width=22)
+        dmg_v.set("All")
+        
+        save_v = create_field("Saving Throw:", ttk.Combobox, values=["All", "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"], state="readonly", width=22)
+        save_v.set("All")
+        
+        conc_v = create_field("Concentration:", ttk.Combobox, values=["All", "Yes", "No"], state="readonly", width=22)
+        conc_v.set("All")
 
         def apply_f():
             filters = []
@@ -117,8 +140,8 @@ class SpellSearchDialog(tk.Toplevel):
                     if i < len(filters) - 1: self.query_blocks.append(logic_var.get())
                 self.render_qblocks(); self.apply_spell_query()
             d.destroy()
-        tk.Button(d, text="Apply Filters", bg="#d9ad6c", font=("Arial", 11, "bold"), command=apply_f).pack(pady=20)
-
+            
+        tk.Button(d, text="Apply Filters", bg="#d9ad6c", font=("Arial", 11, "bold"), fg="black", command=apply_f).pack(pady=20)
     def apply_spell_query(self):
         for item in self.tree.get_children(): self.tree.delete(item)
         self.iid_map.clear()
@@ -232,28 +255,45 @@ class MonsterSearchDialog(tk.Toplevel):
             btn.pack(side=tk.LEFT, padx=2, pady=2)
 
     def open_filter_dialog(self):
-        d = tk.Toplevel(self); d.title("Build Filter"); d.geometry("460x600"); d.configure(bg="#fdf1dc")
-        logic_var = tk.StringVar(value="AND")
-        btn_logic = tk.Button(d, text="AND", bg="#ff4d4d", fg="white", font=("Arial", 12, "bold"), width=10, command=lambda: (logic_var.set("OR") if logic_var.get() == "AND" else logic_var.set("AND"), btn_logic.config(text=logic_var.get(), bg="#4a90e2" if logic_var.get() == "OR" else "#ff4d4d")))
-        btn_logic.pack(pady=5)
+        d = tk.Toplevel(self); d.title("Build Filter"); d.geometry("450x600"); d.configure(bg="#fdf1dc")
         
-        f = tk.Frame(d, bg="#fdf1dc"); f.pack(fill=tk.BOTH, expand=True, padx=30)
-        tk.Label(f, text="Min CR:", bg="#fdf1dc", fg="black", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="e", pady=8, padx=10)
-        min_cr = tk.Scale(f, from_=0, to=30, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=160); min_cr.grid(row=0, column=1, sticky="w", pady=8, padx=10)
-        tk.Label(f, text="Max CR:", bg="#fdf1dc", fg="black", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="e", pady=8, padx=10)
-        max_cr = tk.Scale(f, from_=0, to=30, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=160); max_cr.set(30); max_cr.grid(row=1, column=1, sticky="w", pady=8, padx=10)
+        logic_var = tk.StringVar(value="AND")
+        btn_logic = tk.Button(d, text="AND", bg="#ff4d4d", fg="white", font=("Arial", 12, "bold"), width=10, 
+                              command=lambda: (logic_var.set("OR") if logic_var.get() == "AND" else logic_var.set("AND"), 
+                                               btn_logic.config(text=logic_var.get(), bg="#4a90e2" if logic_var.get() == "OR" else "#ff4d4d")))
+        btn_logic.pack(pady=15)
+        
+        # FIXED: Master inner window frame structured cleanly with anchor="center" alignments
+        f = tk.Frame(d, bg="#fdf1dc")
+        f.pack(anchor="center", padx=20, pady=10)
+        
+        row_idx = 0
+        def create_field(label_text, widget_class, **kwargs):
+            nonlocal row_idx
+            # Symmetric grid column offsets to ensure slider alignment properties work seamlessly
+            lbl = tk.Label(f, text=label_text, bg="#fdf1dc", fg="black", font=("Arial", 10, "bold"), width=16, anchor="e")
+            lbl.grid(row=row_idx, column=0, padx=(0, 15), pady=8, sticky="e")
+            
+            w = widget_class(f, **kwargs)
+            w.grid(row=row_idx, column=1, pady=8, sticky="w")
+            row_idx += 1
+            return w
 
-        tk.Label(f, text="Size:", bg="#fdf1dc", fg="black", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky="e", pady=8, padx=10)
-        size_v = ttk.Combobox(f, values=["All", "Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"], state="readonly", width=18); size_v.set("All"); size_v.grid(row=2, column=1, sticky="w", pady=8, padx=10)
-
-        tk.Label(f, text="Type:", bg="#fdf1dc", fg="black", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky="e", pady=8, padx=10)
-        type_v = ttk.Combobox(f, values=["All", "Aberration", "Beast", "Celestial", "Construct", "Dragon", "Elemental", "Fey", "Fiend", "Giant", "Humanoid", "Monstrosity", "Ooze", "Plant", "Undead"], state="readonly", width=18); type_v.set("All"); type_v.grid(row=3, column=1, sticky="w", pady=8, padx=10)
-
-        tk.Label(f, text="Alignment:", bg="#fdf1dc", fg="black", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky="e", pady=8, padx=10)
-        align_v = ttk.Combobox(f, values=["All", "Lawful Good", "Neutral Good", "Chaotic Good", "Lawful Neutral", "True Neutral", "Chaotic Neutral", "Lawful Evil", "Neutral Evil", "Chaotic Evil", "Unaligned", "Any"], state="readonly", width=18); align_v.set("All"); align_v.grid(row=4, column=1, sticky="w", pady=8, padx=10)
-
-        tk.Label(f, text="Environment:", bg="#fdf1dc", fg="black", font=("Arial", 10, "bold")).grid(row=5, column=0, sticky="e", pady=8, padx=10)
-        env_v = ttk.Combobox(f, values=["All", "Arctic", "Coastal", "Desert", "Forest", "Grassland", "Hill", "Mountain", "Swamp", "Underdark", "Underwater", "Urban"], state="readonly", width=18); env_v.set("All"); env_v.grid(row=5, column=1, sticky="w", pady=8, padx=10)
+        min_cr = create_field("Minimum CR:", tk.Scale, from_=0, to=30, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
+        max_cr = create_field("Maximum CR:", tk.Scale, from_=0, to=30, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
+        max_cr.set(30)
+        
+        size_v = create_field("Size Category:", ttk.Combobox, values=["All", "Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"], state="readonly", width=22)
+        size_v.set("All")
+        
+        type_v = create_field("Creature Type:", ttk.Combobox, values=["All", "Aberration", "Beast", "Celestial", "Construct", "Dragon", "Elemental", "Fey", "Fiend", "Giant", "Humanoid", "Monstrosity", "Ooze", "Plant", "Undead"], state="readonly", width=22)
+        type_v.set("All")
+        
+        align_v = create_field("Alignment Profile:", ttk.Combobox, values=["All", "Lawful Good", "Neutral Good", "Chaotic Good", "Lawful Neutral", "True Neutral", "Chaotic Neutral", "Lawful Evil", "Neutral Evil", "Chaotic Evil", "Unaligned", "Any"], state="readonly", width=22)
+        align_v.set("All")
+        
+        env_v = create_field("Environment:", ttk.Combobox, values=["All", "Arctic", "Coastal", "Desert", "Forest", "Grassland", "Hill", "Mountain", "Swamp", "Underdark", "Underwater", "Urban"], state="readonly", width=22)
+        env_v.set("All")
 
         def apply_f():
             filters = []
@@ -269,6 +309,7 @@ class MonsterSearchDialog(tk.Toplevel):
                     if i < len(filters) - 1: self.query_blocks.append(logic_var.get())
                 self.render_qblocks(); self.apply_query()
             d.destroy()
+            
         tk.Button(d, text="Apply Filters", bg="#d9ad6c", font=("Arial", 11, "bold"), fg="black", command=apply_f).pack(pady=20)
 
     def apply_query(self):
@@ -333,7 +374,14 @@ class EntitySelectionDialog(tk.Toplevel):
         
         self.tree.bind("<Double-1>", lambda e: self.confirm_selection())
 
-        available_items = sorted([p.name for p in global_source_dir.iterdir() if p.is_dir()])
+        # MODIFIED: Explicitly crawl nested location profiles in folders recursively
+        if folder_category == "Locations":
+            available_items = sorted([str(p.relative_to(global_source_dir)) for p in global_source_dir.rglob("*") if p.is_dir()])
+        elif folder_category == "Objects":
+            available_items = sorted([p.stem for p in global_source_dir.glob("*.json")])        
+        else:
+            available_items = sorted([p.name for p in global_source_dir.iterdir() if p.is_dir()])
+            
         for i, item in enumerate(available_items):
             tag = "evenrow" if i % 2 == 0 else "oddrow"
             self.tree.insert("", tk.END, values=(item,), tags=(tag,))

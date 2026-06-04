@@ -1,0 +1,152 @@
+{
+    "name": "Aberrant Cultist",
+    "source": "XMM",
+    "page": 86,
+    "referenceSources": [
+        "EFA",
+        "FRAiF"
+    ],
+    "size": [
+        "S",
+        "M"
+    ],
+    "type": "humanoid",
+    "alignment": [
+        "N",
+        "E"
+    ],
+    "ac": [
+        14
+    ],
+    "hp": {
+        "average": 137,
+        "formula": "25d8 + 25"
+    },
+    "speed": {
+        "walk": 30
+    },
+    "initiative": {
+        "proficiency": 1
+    },
+    "str": 10,
+    "dex": 19,
+    "con": 12,
+    "int": 16,
+    "wis": 18,
+    "cha": 15,
+    "save": {
+        "int": "+6",
+        "wis": "+7"
+    },
+    "skill": {
+        "arcana": "+6",
+        "perception": "+7",
+        "religion": "+6"
+    },
+    "senses": [
+        "Darkvision 90 ft."
+    ],
+    "passive": 17,
+    "languages": [
+        "Common",
+        "Deep Speech; telepathy 30 ft."
+    ],
+    "cr": "8",
+    "spellcasting": [
+        {
+            "name": "Spellcasting",
+            "type": "spellcasting",
+            "headerEntries": [
+                "The cultist casts one of the following spells, using Wisdom as the spellcasting ability (spell save {@dc 15}):"
+            ],
+            "will": [
+                "{@spell Detect Thoughts|XPHB}",
+                "{@spell Minor Illusion|XPHB}"
+            ],
+            "ability": "wis",
+            "displayAs": "action"
+        },
+        {
+            "name": "Counterspell (2/Day)",
+            "type": "spellcasting",
+            "headerEntries": [
+                "The cultist casts {@spell Counterspell|XPHB} in response to that spell's trigger, using the same spellcasting ability as Spellcasting."
+            ],
+            "daily": {
+                "2": [
+                    "{@spell Counterspell|XPHB}"
+                ]
+            },
+            "ability": "wis",
+            "displayAs": "reaction",
+            "hidden": [
+                "daily"
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The cultist makes two Tentacle Lash attacks. It can replace any attack with a use of Mind Rot."
+            ]
+        },
+        {
+            "name": "Tentacle Lash",
+            "entries": [
+                "{@atkr m} {@hit 7}, reach 10 ft. {@h}7 ({@damage 1d6 + 4}) Slashing damage plus 14 ({@damage 4d6}) Psychic damage. If the target is a Large or smaller creature, it has the {@condition Grappled|XPHB} condition (escape {@dc 14}) from one of two tentacles, and it has the {@condition Restrained|XPHB} condition until the grapple ends."
+            ]
+        },
+        {
+            "name": "Mind Rot",
+            "entries": [
+                "{@actSave wis} {@dc 15}, one creature the cultist can see within 90 feet. {@actSaveFail} 27 ({@damage 6d8}) Psychic damage, and the target has the {@condition Poisoned|XPHB} condition until the start of the cultist's next turn. {@actSaveSuccess} Half damage only."
+            ]
+        }
+    ],
+    "environment": [
+        "any"
+    ],
+    "treasure": [
+        "individual",
+        "relics"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "languageTags": [
+        "C",
+        "DS",
+        "TP"
+    ],
+    "damageTags": [
+        "S",
+        "Y"
+    ],
+    "spellcastingTags": [
+        "O"
+    ],
+    "miscTags": [
+        "MA",
+        "RCH"
+    ],
+    "conditionInflict": [
+        "grappled",
+        "poisoned",
+        "restrained"
+    ],
+    "savingThrowForced": [
+        "wisdom"
+    ],
+    "savingThrowForcedSpell": [
+        "constitution",
+        "wisdom"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true,
+    "objects": []
+}

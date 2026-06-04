@@ -1,11 +1,29 @@
 {
     "name": "a",
     "description": "",
-    "monsters": [],
-    "npcs": [],
-    "combats": [],
-    "locations": [],
-    "connections": [],
+    "monsters": [
+        "Aberrant Spirit",
+        "Aartuk Weedling",
+        "Aartuk Weedling",
+        "Aberrant Cultist",
+        "Aberrant Spirit"
+    ],
+    "npcs": [
+        "New NPC"
+    ],
+    "combats": [
+        "New Combat"
+    ],
+    "locations": [
+        "b",
+        "b"
+    ],
+    "connections": [
+        {
+            "target": "c",
+            "description": ""
+        }
+    ],
     "objects": [
         "sword"
     ]

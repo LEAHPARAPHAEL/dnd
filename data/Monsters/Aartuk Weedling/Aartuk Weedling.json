@@ -1,0 +1,106 @@
+{
+    "name": "Aartuk Weedling",
+    "source": "BAM",
+    "page": 9,
+    "referenceSources": [
+        "LoX"
+    ],
+    "size": [
+        "M"
+    ],
+    "type": "plant",
+    "alignment": [
+        "L",
+        "E"
+    ],
+    "alignmentPrefix": "typically ",
+    "ac": [
+        15
+    ],
+    "hp": {
+        "average": 38,
+        "formula": "7d8 + 7"
+    },
+    "speed": {
+        "walk": 20,
+        "climb": 20
+    },
+    "str": 14,
+    "dex": 12,
+    "con": 13,
+    "int": 10,
+    "wis": 13,
+    "cha": 10,
+    "senses": [
+        "darkvision 60 ft."
+    ],
+    "passive": 11,
+    "languages": [
+        "Aartuk"
+    ],
+    "cr": "2",
+    "trait": [
+        {
+            "name": "Spider Climb",
+            "entries": [
+                "The aartuk can climb difficult surfaces, including upside down on ceilings, without needing to make an ability check."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The aartuk makes two Branch attacks, two Radiant Pellet attacks, or one of each."
+            ]
+        },
+        {
+            "name": "Branch",
+            "entries": [
+                "{@atk mw} {@hit 4} to hit, reach 10 ft., one target. {@h}9 ({@damage 2d6 + 2}) bludgeoning damage."
+            ]
+        },
+        {
+            "name": "Radiant Pellet",
+            "entries": [
+                "{@atk rs} {@hit 3} to hit, range 60 ft., one target. {@h}8 ({@damage 3d4 + 1}) radiant damage."
+            ]
+        }
+    ],
+    "bonus": [
+        {
+            "name": "Tongue {@recharge}",
+            "entries": [
+                "The aartuk tries to use its gooey tongue to snare one Medium or smaller creature it can see within 30 feet of itself. The target must make a {@dc 11} Dexterity saving throw. On a failed save, the target is {@condition grappled} by the tongue (escape {@dc 12}) and pulled up to 25 feet toward the aartuk. The tongue can grapple one creature at a time."
+            ]
+        }
+    ],
+    "traitTags": [
+        "Spider Climb"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "damageTags": [
+        "B",
+        "R"
+    ],
+    "miscTags": [
+        "MW",
+        "RCH"
+    ],
+    "conditionInflict": [
+        "grappled"
+    ],
+    "savingThrowForced": [
+        "dexterity"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true,
+    "level": "",
+    "objects": []
+}

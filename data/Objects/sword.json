@@ -1,9 +1,7 @@
 {
-    "name": "sword",
+    "name": "Sword",
     "description": "",
     "effect": "",
-    "owners": [
-        "New NPC"
-    ],
+    "owners": [],
     "spellcasting": []
 }

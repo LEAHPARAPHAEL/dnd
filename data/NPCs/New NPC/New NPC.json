@@ -1,7 +1,7 @@
 {
     "name": "New NPC",
     "source": "Custom",
-    "level": 1,
+    "level": 10,
     "size": [
         "M"
     ],
@@ -33,8 +33,39 @@
             ]
         }
     ],
-    "cr": "",
-    "objects": [
-        "sword"
+    "cr": "8",
+    "objects": [],
+    "spellcasting": [
+        {
+            "name": "Spellcasting",
+            "type": "spellcasting",
+            "headerEntries": [
+                "New NPC is a @level spellcaster. Its spellcasting ability is @ability (spell save {@custom_dc}, {@custom_hit} to hit with spell attacks). New NPC has the following spells prepared:"
+            ],
+            "ability": "int",
+            "custom_dc": 10,
+            "custom_hit": 2,
+            "spells": {
+                "2": {
+                    "spells": [
+                        "{@spell aid}"
+                    ],
+                    "slots": 1
+                },
+                "1": {
+                    "spells": [
+                        "{@spell alarm}"
+                    ],
+                    "slots": 1
+                },
+                "5": {
+                    "spells": [
+                        "{@spell animate objects}"
+                    ],
+                    "slots": 1
+                }
+            },
+            "displayAs": "trait"
+        }
     ]
 }

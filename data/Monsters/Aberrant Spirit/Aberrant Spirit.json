@@ -1,0 +1,247 @@
+{
+    "name": "Aberrant Spirit",
+    "source": "TCE",
+    "page": 109,
+    "reprintedAs": [
+        "Aberrant Spirit|XPHB"
+    ],
+    "summonedBySpell": "Summon Aberration|TCE",
+    "summonedBySpellLevel": 4,
+    "size": [
+        "M"
+    ],
+    "type": "aberration",
+    "alignment": [
+        "U"
+    ],
+    "ac": [
+        {
+            "special": "11 + the level of the spell (natural armor)"
+        }
+    ],
+    "hp": {
+        "special": "40 + 10 for each spell level above 4th"
+    },
+    "speed": {
+        "walk": 30,
+        "fly": {
+            "number": 30,
+            "condition": "(beholderkin only; hover)"
+        },
+        "canHover": true
+    },
+    "str": 16,
+    "dex": 10,
+    "con": 15,
+    "int": 16,
+    "wis": 10,
+    "cha": 6,
+    "senses": [
+        "darkvision 60 ft."
+    ],
+    "passive": 10,
+    "immune": [
+        "psychic"
+    ],
+    "languages": [
+        "Deep Speech",
+        "understands the languages you speak"
+    ],
+    "trait": [
+        {
+            "name": "Regeneration (Slaad Only)",
+            "entries": [
+                "The aberration regains 5 hit points at the start of its turn if it has at least 1 hit point."
+            ]
+        },
+        {
+            "name": "Whispering Aura (Star Spawn Only)",
+            "entries": [
+                "At the start of each of the aberration's turns, each creature within 5 feet of the aberration must succeed on a Wisdom saving throw against your spell save DC or take {@damage 2d6} psychic damage, provided that the aberration isn't {@condition incapacitated}."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The aberration makes a number of attacks equal to half this spell's level (rounded down)."
+            ]
+        },
+        {
+            "name": "Eye Ray (Beholderkin Only)",
+            "entries": [
+                "{@atk rs} {@hitYourSpellAttack} to hit, range 150 ft., one creature. {@h}{@damage 1d8 + 3 + summonSpellLevel} psychic damage."
+            ]
+        },
+        {
+            "name": "Claws (Slaad Only)",
+            "entries": [
+                "{@atk mw} {@hitYourSpellAttack} to hit, reach 5 ft., one target. {@h}{@damage 1d10 + 3 + summonSpellLevel} slashing damage. If the target is a creature, it can't regain hit points until the start of the aberration's next turn."
+            ]
+        },
+        {
+            "name": "Psychic Slam (Star Spawn Only)",
+            "entries": [
+                "{@atk ms} {@hitYourSpellAttack} to hit, reach 5 ft., one creature. {@h}{@damage 1d8 + 3 + summonSpellLevel} psychic damage."
+            ]
+        }
+    ],
+    "tokenCustom": true,
+    "traitTags": [
+        "Regeneration"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "actionTags": [
+        "Multiattack"
+    ],
+    "languageTags": [
+        "DS"
+    ],
+    "damageTags": [
+        "S",
+        "Y"
+    ],
+    "miscTags": [
+        "AOE",
+        "MW"
+    ],
+    "hasToken": true,
+    "_versions": [
+        {
+            "name": "Aberrant Spirit (Beholderkin)",
+            "source": "TCE",
+            "_mod": {
+                "action": [
+                    {
+                        "mode": "removeArr",
+                        "names": [
+                            "Claws (Slaad Only)",
+                            "Psychic Slam (Star Spawn Only)"
+                        ]
+                    },
+                    {
+                        "mode": "renameArr",
+                        "renames": {
+                            "rename": "Eye Ray (Beholderkin Only)",
+                            "with": "Eye Ray"
+                        }
+                    }
+                ]
+            },
+            "speed": {
+                "walk": 30,
+                "fly": {
+                    "number": 30,
+                    "condition": "(hover)"
+                },
+                "canHover": true
+            },
+            "trait": null,
+            "traitTags": null,
+            "damageTags": [
+                "Y"
+            ],
+            "miscTags": null
+        },
+        {
+            "name": "Aberrant Spirit (Slaad)",
+            "source": "TCE",
+            "_mod": {
+                "trait": [
+                    {
+                        "mode": "removeArr",
+                        "names": [
+                            "Whispering Aura (Star Spawn Only)"
+                        ]
+                    },
+                    {
+                        "mode": "renameArr",
+                        "renames": {
+                            "rename": "Regeneration (Slaad Only)",
+                            "with": "Regeneration"
+                        }
+                    }
+                ],
+                "action": [
+                    {
+                        "mode": "removeArr",
+                        "names": [
+                            "Eye Ray (Beholderkin Only)",
+                            "Psychic Slam (Star Spawn Only)"
+                        ]
+                    },
+                    {
+                        "mode": "renameArr",
+                        "renames": {
+                            "rename": "Claws (Slaad Only)",
+                            "with": "Claws"
+                        }
+                    }
+                ]
+            },
+            "speed": {
+                "walk": 30
+            },
+            "traitTags": [
+                "Regeneration"
+            ],
+            "damageTags": [
+                "S"
+            ],
+            "miscTags": [
+                "MW"
+            ]
+        },
+        {
+            "name": "Aberrant Spirit (Star Spawn)",
+            "source": "TCE",
+            "_mod": {
+                "trait": [
+                    {
+                        "mode": "removeArr",
+                        "names": [
+                            "Regeneration (Slaad Only)"
+                        ]
+                    },
+                    {
+                        "mode": "renameArr",
+                        "renames": {
+                            "rename": "Whispering Aura (Star Spawn Only)",
+                            "with": "Whispering Aura"
+                        }
+                    }
+                ],
+                "action": [
+                    {
+                        "mode": "removeArr",
+                        "names": [
+                            "Eye Ray (Beholderkin Only)",
+                            "Claws (Slaad Only)"
+                        ]
+                    },
+                    {
+                        "mode": "renameArr",
+                        "renames": {
+                            "rename": "Psychic Slam (Star Spawn Only)",
+                            "with": "Psychic Slam"
+                        }
+                    }
+                ]
+            },
+            "speed": {
+                "walk": 30
+            },
+            "traitTags": [
+                "Regeneration"
+            ],
+            "damageTags": [
+                "Y"
+            ],
+            "miscTags": null
+        }
+    ],
+    "objects": []
+}

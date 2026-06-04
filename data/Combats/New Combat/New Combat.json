@@ -1,0 +1,20 @@
+{
+    "name": "New Combat",
+    "location": "Any",
+    "time": "Any",
+    "description": "None",
+    "over": "No",
+    "outcome": "",
+    "participants": [
+        {
+            "name": "Aartuk Weedling",
+            "target": "Aartuk Weedling",
+            "type": "Monsters",
+            "side": "Enemy",
+            "init": 0,
+            "hp": 38,
+            "max_hp": 38,
+            "dead": false
+        }
+    ]
+}

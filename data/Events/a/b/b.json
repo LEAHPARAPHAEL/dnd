@@ -1,0 +1,15 @@
+{
+    "name": "b",
+    "description": "",
+    "monsters": [],
+    "npcs": [],
+    "combats": [],
+    "locations": [],
+    "objects": [],
+    "connections": [
+        {
+            "target": "a",
+            "description": ""
+        }
+    ]
+}

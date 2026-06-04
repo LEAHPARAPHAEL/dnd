@@ -1,0 +1,138 @@
+{
+    "name": "Aboleth Spawn",
+    "source": "CRCotN",
+    "page": 135,
+    "size": [
+        "M"
+    ],
+    "type": "aberration",
+    "alignment": [
+        "L",
+        "E"
+    ],
+    "alignmentPrefix": "typically ",
+    "ac": [
+        {
+            "ac": 14,
+            "from": [
+                "natural armor"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 93,
+        "formula": "11d8 + 44"
+    },
+    "speed": {
+        "walk": 30,
+        "swim": 30
+    },
+    "str": 19,
+    "dex": 11,
+    "con": 18,
+    "int": 7,
+    "wis": 12,
+    "cha": 9,
+    "skill": {
+        "perception": "+4"
+    },
+    "senses": [
+        "darkvision 120 ft."
+    ],
+    "passive": 14,
+    "resist": [
+        "psychic"
+    ],
+    "conditionImmune": [
+        "charmed",
+        "frightened"
+    ],
+    "languages": [
+        "Common",
+        "Deep Speech",
+        "telepathy 60 ft."
+    ],
+    "cr": "5",
+    "trait": [
+        {
+            "name": "Abolethic Vessel",
+            "entries": [
+                "The spawn must obey its aboleth master."
+            ]
+        },
+        {
+            "name": "Amphibious",
+            "entries": [
+                "The spawn can breathe air and water."
+            ]
+        },
+        {
+            "name": "Water Dependency",
+            "entries": [
+                "The spawn takes 6 ({@damage 1d12}) acid damage every 10 minutes it goes without being immersed in water."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Multiattack",
+            "entries": [
+                "The spawn makes one Spear attack, two Tentacle attacks, and one Psychic Lash attack."
+            ]
+        },
+        {
+            "name": "Spear",
+            "entries": [
+                "{@atk mw,rw} {@hit 7} to hit, reach 5 ft. or range 20/60 ft., one target. {@h}7 ({@damage 1d6 + 4}) piercing damage, or 8 ({@damage 1d8 + 4}) piercing damage when used with two hands to make a melee attack."
+            ]
+        },
+        {
+            "name": "Tentacle",
+            "entries": [
+                "{@atk mw} {@hit 7} to hit, reach 10 ft., one creature. {@h}The target is {@condition grappled} (escape {@dc 14}) and takes 9 ({@damage 2d8}) psychic damage at the start of each of its turns until the grapple ends. The spawn has four tentacles, each of which can grapple one creature."
+            ]
+        },
+        {
+            "name": "Psychic Lash",
+            "entries": [
+                "{@atk rs} {@hit 7} to hit, range 120 ft., one creature. {@h}18 ({@damage 4d8}) psychic damage."
+            ]
+        }
+    ],
+    "attachedItems": [
+        "spear|phb"
+    ],
+    "traitTags": [
+        "Amphibious"
+    ],
+    "senseTags": [
+        "SD"
+    ],
+    "actionTags": [
+        "Multiattack",
+        "Tentacles"
+    ],
+    "languageTags": [
+        "C",
+        "DS",
+        "TP"
+    ],
+    "damageTags": [
+        "A",
+        "P",
+        "Y"
+    ],
+    "miscTags": [
+        "MLW",
+        "MW",
+        "RCH",
+        "RW",
+        "THW"
+    ],
+    "conditionInflict": [
+        "grappled"
+    ],
+    "hasToken": true,
+    "hasFluffImages": true,
+    "objects": []
+}

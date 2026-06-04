@@ -200,7 +200,9 @@ class StatBlockRenderer(tk.Frame):
         self.overlay_buttons.extend([b_del, b_edit])
 
     def render_edit_mode(self, data, monster_dir, loc_name, save_callback, cancel_callback, add_existing_object_cb=None):
-        self.clear_overlays(); self.view_container.pack_forget(); self.edit_container.pack(fill=tk.BOTH, expand=True)
+        self.clear_overlays()
+        self.view_container.pack_forget()
+        self.edit_container.pack(fill=tk.BOTH, expand=True)
         for widget in self.edit_inner.winfo_children(): widget.destroy()
 
         self.is_object_mode = False
@@ -564,8 +566,15 @@ class StatBlockRenderer(tk.Frame):
             def rebuild_local_sc():
                 for row in sc_container.winfo_children():
                     if isinstance(row, tk.Frame) and row.winfo_children():
-                        row.pack_forget() # Unpack right away to force space collapse
+                        row.pack_forget()
                         row.destroy()
+
+                # NEW: prune entries whose hdr_text widget is now destroyed
+                self.sc_refs = [
+                    entry for entry in self.sc_refs
+                    if entry[1].winfo_exists()
+                ]
+
                 sc_data = self.edit_data.get("spellcasting", [])
                 has_matching = False
                 
@@ -736,8 +745,8 @@ class StatBlockRenderer(tk.Frame):
                     btn_add_sc.config(state=tk.DISABLED if has_matching else tk.NORMAL)
                 
                 # FIXED: Swapped to update_idletasks() to completely fix layout lag
-                self.edit_inner.update_idletasks()
-                self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+                #self.edit_inner.update_idletasks()
+                #self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
             self.rebuild_sc_hooks.append(rebuild_local_sc)
 
@@ -1642,7 +1651,7 @@ class StatBlockRenderer(tk.Frame):
             item_dict = {"name": name, "frame": row}
             storage_list.append(item_dict)
             tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.destroy(), storage_list.remove(item_dict), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
-            self.edit_inner.update()
+            self.edit_inner.update_idletasks()
             self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
         o_hdr, o_lst = make_section("Owner(s):")
@@ -1657,7 +1666,7 @@ class StatBlockRenderer(tk.Frame):
             self.build_array_section(sec_key, sec_title, rebuild_all_sc, sync_all_sc)
             
         rebuild_all_sc()
-        self.edit_inner.update()
+        self.edit_inner.update_idletasks()
         self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
 class CombatRenderer(tk.Frame):

@@ -1,0 +1,40 @@
+{
+    "name": "b",
+    "description": "",
+    "monsters": [],
+    "npcs": [],
+    "combats": [],
+    "events": [],
+    "objects": [
+        {
+            "name": "object",
+            "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\Objects\\object.json"
+        }
+    ],
+    "connections": [
+        {
+            "target": {
+                "name": "a",
+                "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\a"
+            },
+            "description": ""
+        },
+        {
+            "target": {
+                "name": "c",
+                "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\c"
+            },
+            "description": ""
+        },
+        {
+            "target": {
+                "name": "d",
+                "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\d"
+            },
+            "description": ""
+        }
+    ],
+    "depths": [
+        0
+    ]
+}

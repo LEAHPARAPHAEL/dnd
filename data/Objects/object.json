@@ -1,0 +1,29 @@
+{
+    "name": "object",
+    "description": "",
+    "effect": "",
+    "owners": [
+        {
+            "name": "anonymous",
+            "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\NPCs\\anonymous"
+        }
+    ],
+    "spellcasting": [
+        {
+            "name": "Spellcasting",
+            "type": "spellcasting",
+            "headerEntries": [
+                ""
+            ],
+            "spells": {
+                "2": {
+                    "spells": [
+                        "{@spell air bubble}"
+                    ],
+                    "slots": 1
+                }
+            },
+            "displayAs": "object_slots"
+        }
+    ]
+}

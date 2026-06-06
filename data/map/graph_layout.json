@@ -1,0 +1,25 @@
+{
+    "reference_width": 1000,
+    "nodes": {
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\a": {
+            "x": 90,
+            "y": 153
+        },
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\b": {
+            "x": 426,
+            "y": 399
+        },
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\c": {
+            "x": 385,
+            "y": 229
+        },
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\d": {
+            "x": 215,
+            "y": 395
+        },
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\e": {
+            "x": 539,
+            "y": 274
+        }
+    }
+}

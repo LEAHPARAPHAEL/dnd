@@ -1,0 +1,124 @@
+{
+    "name": "Clockwork Stone Defender",
+    "source": "MPMM",
+    "page": 80,
+    "otherSources": [
+        {
+            "source": "MTF",
+            "page": 126
+        },
+        {
+            "source": "RtG",
+            "page": 35
+        }
+    ],
+    "size": [
+        "M"
+    ],
+    "type": "construct",
+    "alignment": [
+        "U"
+    ],
+    "ac": [
+        {
+            "ac": 16,
+            "from": [
+                "natural armor"
+            ]
+        }
+    ],
+    "hp": {
+        "average": 105,
+        "formula": "14d8 + 42"
+    },
+    "speed": {
+        "walk": 30
+    },
+    "str": 19,
+    "dex": 10,
+    "con": 17,
+    "int": 3,
+    "wis": 10,
+    "cha": 1,
+    "senses": [
+        "darkvision 60 ft."
+    ],
+    "passive": 10,
+    "immune": [
+        "poison"
+    ],
+    "conditionImmune": [
+        "charmed",
+        "exhaustion",
+        "frightened",
+        "paralyzed",
+        "petrified",
+        "poisoned"
+    ],
+    "languages": [
+        "understands one language of its creator but can't speak"
+    ],
+    "cr": "4",
+    "trait": [
+        {
+            "name": "Magic Resistance",
+            "entries": [
+                "The clockwork has advantage on saving throws against spells and other magical effects."
+            ]
+        },
+        {
+            "name": "Unusual Nature",
+            "entries": [
+                "The clockwork doesn't require air, food, drink, or sleep."
+            ]
+        }
+    ],
+    "action": [
+        {
+            "name": "Slam",
+            "entries": [
+                "{@atk mw} {@hit 6} to hit, reach 5 ft., one target. {@h}11 ({@damage 2d6 + 4}) bludgeoning damage, and if the target is Large or smaller, it is knocked {@condition prone}."
+            ]
+        }
+    ],
+    "reaction": [
+        {
+            "name": "Intercept Attack",
+            "entries": [
+                "In response to another creature within 5 feet of it being hit by an attack roll, the clockwork gives that creature a +5 bonus to its AC against that attack, potentially causing a miss. To use this ability, the clockwork must be able to see the creature and the attacker."
+            ]
+        }
+    ],
+    "environment": [
+        "forest",
+        "grassland",
+        "hill",
+        "mountain"
+    ],
+    "soundClip": {
+        "type": "internal",
+        "path": "bestiary/stone-defender.opus"
+    },
+    "traitTags": [
+        "Magic Resistance",
+        "Unusual Nature"
+    ],
+    "senseTags": [
+        "D"
+    ],
+    "languageTags": [
+        "CS"
+    ],
+    "damageTags": [
+        "B"
+    ],
+    "miscTags": [
+        "MW"
+    ],
+    "conditionInflict": [
+        "prone"
+    ],
+    "hasToken": true,
+    "hasFluff": true,
+    "hasFluffImages": true
+}

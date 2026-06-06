@@ -111,3 +111,11 @@ def clean_5etools_text(text: str) -> str:
         
     text = re.sub(r'{@actSave (\w+)}', lambda m: f"{get_full_ability_name(m.group(1).lower())} Saving Throw:", text)
     return re.sub(r'{@\w+ ([^|}]+)[^}]*}', r'\1', text)
+
+def clean_spell_display_name(spell_name : str) -> str:
+    disp_name = clean_5etools_text(spell_name)
+    if ":" in disp_name: 
+        disp_name = disp_name.split(":", 1)[1]
+    disp_name = disp_name.replace("«", "").replace("»", "").strip().title()
+                                    
+    return disp_name

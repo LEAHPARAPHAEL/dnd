@@ -10,9 +10,24 @@ from PIL import Image, ImageTk
 import utils
 import downloader
 from models import Node
-from stat_renderer import StatBlockRenderer, CombatRenderer, AutoHeightText
+from stat_renderer import StatBlockRenderer, CombatRenderer, AutoHeightText, MapGraphRenderer
 from dialogs import SpellSearchDialog, MonsterSearchDialog, EntitySelectionDialog
+import copy
 
+class SyncRef(str):
+    """A string subclass that enables absolute-path graph synchronization.
+    It passes string-type checks natively across Tkinter widgets, while 
+    preserving absolute file system paths as attributes for background sweeps.
+    """
+    def __new__(cls, name, path):
+        obj = super().__new__(cls, name)
+        obj.path = str(Path(path).resolve())
+        return obj
+
+    def __reduce__(self):
+        # Custom reducer to ensure deepcopy passes both name and path parameters
+        return (SyncRef, (str(self), self.path))
+    
 class PageState:
     def __init__(self, node: Node, view_type: str, stat_path: Path = None, data: dict = None, prev=None):
         self.node = node
@@ -54,7 +69,27 @@ class DnDStatManager(tk.Tk):
         self.bind_all("<Button-5>", self._global_mouse_wheel)
 
     def _global_mouse_wheel(self, event):
+        try:
+            # Check if any viewer pane currently holds an active, open preview window instance
+            active_popup = None
+            if hasattr(self, 'stat_viewer') and getattr(self.stat_viewer, '_hover_popup', None):
+                active_popup = self.stat_viewer._hover_popup
+            elif hasattr(self, 'combat_viewer') and getattr(self.combat_viewer, '_hover_popup', None):
+                active_popup = self.combat_viewer._hover_popup
+            elif hasattr(self, 'map_graph_viewer') and getattr(self.map_graph_viewer, '_hover_popup', None):
+                active_popup = self.map_graph_viewer._hover_popup
+
+            # If a hover popup exists, completely hijack the scroll signal and route it to its text panel
+            if active_popup and active_popup.winfo_exists():
+                units = -2 if event.num == 4 else 2 if event.num == 5 else -1 * (event.delta // 40)
+                if hasattr(active_popup, 'target_text_widget') and active_popup.target_text_widget.winfo_exists():
+                    active_popup.target_text_widget.yview_scroll(units, "units")
+                return "break"
+        except: pass
+
+        # Guard rail checking loop for main text entries (Preserves original background layout protections)
         if isinstance(event.widget, AutoHeightText): return
+        
         try:
             hovered_widget = event.widget
             if not hovered_widget: return
@@ -87,6 +122,9 @@ class DnDStatManager(tk.Tk):
                     elif self.spell_manager_frame.winfo_ismapped():
                         v_top, v_bottom = self.spell_tree.yview()
                         if v_top > 0.0 or v_bottom < 1.0: self.spell_tree.yview_scroll(units, "units")
+                    elif hasattr(self, 'map_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
+                        v_top, v_bottom = self.map_graph_viewer.canvas.yview()
+                        if v_top > 0.0 or v_bottom < 1.0: self.map_graph_viewer.canvas.yview_scroll(units, "units")
                     return
                 parent_id = cur.winfo_parent()
                 if not parent_id: break
@@ -98,7 +136,7 @@ class DnDStatManager(tk.Tk):
 
     def _set_node_open(self, target, state, nodes=None):
         for n in (nodes if nodes is not None else getattr(self, 'nodes', [])):
-            if n.path == target: 
+            if n.path == target:    
                 n.is_open = state; return True
             if self._set_node_open(target, state, n.children): 
                 n.is_open = True; return True
@@ -141,9 +179,10 @@ class DnDStatManager(tk.Tk):
         
         self.stat_viewer = StatBlockRenderer(self.view_pane)
         self.stat_viewer.set_spell_callback(self.on_spell_clicked); self.stat_viewer.set_spells_index(self.spells_index); self.stat_viewer.set_location_link_callback(self.on_location_link_clicked)
-        
+        self.stat_viewer._hover_data_resolver = self.resolve_hover_data
         self.combat_viewer = CombatRenderer(self.view_pane, open_statblock_cb=self._combat_open_statblock, save_cb=self.save_combat_edits, add_bestiary_cb=self._combat_add_bestiary, add_camp_mon_cb=self._combat_add_camp_mon, add_camp_npc_cb=self._combat_add_camp_npc, cancel_cb=self.navigate_back)
-        
+        self.map_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.map_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="location"))
+
         # Monsters Indexes Dashboard
         self.search_frame = tk.Frame(self.view_pane, bg="#fdf1dc")
         tk.Label(self.search_frame, text="Monster Database", font=("Georgia", 16, "bold"), bg="#fdf1dc", fg="#7a200d").pack(pady=10)
@@ -184,6 +223,121 @@ class DnDStatManager(tk.Tk):
 
         self.placeholder_frame = tk.Frame(self.view_pane, bg="#fdf1dc"); self.placeholder_lbl = tk.Label(self.placeholder_frame, text="", font=("Georgia", 14, "italic"), bg="#fdf1dc", fg="black"); self.placeholder_lbl.pack(expand=True)
 
+
+    def resolve_hover_data(self, prefix, name):
+        """Fetches and inflates campaign JSON sheets on-the-fly for hover tooltips."""
+        try:
+            if prefix == "PATH_TAG":
+                p = Path(name)
+                sj = p / f"{p.name}.json"
+                if sj.exists():
+                    with open(sj, "r", encoding="utf-8") as f:
+                        dtype = "event" if "events" in str(p).lower() else "location"
+                        return self._inflate_refs(json.load(f)), dtype
+                        
+            elif prefix == "SPELL_TAG":
+                sd = next((s for s in self.spells_index if s["name"].lower() == name.lower()), None)
+                return copy.deepcopy(sd), "spell"
+                
+            elif prefix in ["LOC_MON_TAG", "LOC_NPC_TAG"]:
+                folder = self.monsters_dir if prefix == "LOC_MON_TAG" else self.npcs_dir
+                p = Path(name)
+                if not p.exists(): p = folder / name
+                jsons = list(p.glob("*.json")) if p.is_dir() else [p] if p.exists() else []
+                if jsons:
+                    with open(jsons[0], "r", encoding="utf-8") as f:
+                        return self._inflate_refs(json.load(f)), ("monster" if prefix == "LOC_MON_TAG" else "npc")
+                        
+            elif prefix == "LOC_OBJ_TAG":
+                p = Path(name)
+                if not p.exists(): p = self.objects_dir / f"{name}.json"
+                if p.exists():
+                    with open(p, "r", encoding="utf-8") as f:
+                        return self._inflate_refs(json.load(f)), "object"
+                        
+            elif prefix in ["LOC_EVT_TAG", "LOC_CONN_TAG"]:
+                p = Path(name)
+                if not p.exists():
+                    p = self.events_dir / name
+                    if not p.exists(): p = self.map_dir / name
+                    if not p.exists():
+                        found = list(self.events_dir.rglob(name)) + list(self.map_dir.rglob(name))
+                        if found and found[0].is_dir(): p = found[0]
+                sj = p / f"{p.name}.json"
+                if sj.exists():
+                    with open(sj, "r", encoding="utf-8") as f:
+                        dtype = "event" if "events" in str(p).lower() else "location"
+                        return self._inflate_refs(json.load(f)), dtype
+        except Exception as e:
+            print(f"Hover preview resolution failed: {e}")
+        return None, None
+
+    def _inflate_refs(self, data):
+        """Recursively parses raw saved JSON objects and inflates path data strings into 
+        SyncRef string subclass instances so they format natively as plain names in lists.
+        """
+        if not isinstance(data, dict): return data
+        keys = ["monsters", "npcs", "combats", "events", "locations", "objects", "owners"]
+        for k in keys:
+            if k in data and isinstance(data[k], list):
+                new_list = []
+                for item in data[k]:
+                    if isinstance(item, dict) and "name" in item and "path" in item:
+                        new_list.append(SyncRef(item["name"], item["path"]))
+                    elif isinstance(item, str) and item.strip():
+                        p = Path(item)
+                        name = p.stem if p.is_file() else p.name
+                        new_list.append(SyncRef(name, str(p.resolve())))
+                    else:
+                        new_list.append(item)
+                data[k] = new_list
+        if "connections" in data and isinstance(data["connections"], list):
+            for conn in data["connections"]:
+                if isinstance(conn, dict) and "target" in conn:
+                    t = conn["target"]
+                    if isinstance(t, dict) and "name" in t and "path" in t:
+                        conn["target"] = SyncRef(t["name"], t["path"])
+                    elif isinstance(t, str) and t.strip():
+                        p = Path(t)
+                        name = p.stem if p.is_file() else p.name
+                        conn["target"] = SyncRef(name, str(p.resolve()))
+        return data
+
+    def _serialize_refs(self, data):
+        """Transforms tracking lists of SyncRef strings back into standard two-variable 
+        dictionary objects right before saving them to disk.
+        """
+        if not isinstance(data, dict): return data
+        keys = ["monsters", "npcs", "combats", "events", "locations", "objects", "owners"]
+        for k in keys:
+            if k in data and isinstance(data[k], list):
+                new_list = []
+                for item in data[k]:
+                    if hasattr(item, "path"):
+                        new_list.append({"name": str(item), "path": item.path})
+                    elif isinstance(item, dict) and "name" in item and "path" in item:
+                        new_list.append({"name": item["name"], "path": item["path"]})
+                    elif isinstance(item, str) and item.strip():
+                        p = Path(item)
+                        name = p.stem if p.is_file() else p.name
+                        new_list.append({"name": name, "path": str(p.resolve())})
+                    else:
+                        new_list.append(item)
+                data[k] = new_list
+        if "connections" in data and isinstance(data["connections"], list):
+            for conn in data["connections"]:
+                if isinstance(conn, dict) and "target" in conn:
+                    t = conn["target"]
+                    if hasattr(t, "path"):
+                        conn["target"] = {"name": str(t), "path": t.path}
+                    elif isinstance(t, dict) and "name" in t and "path" in t:
+                        conn["target"] = {"name": t["name"], "path": t["path"]}
+                    elif isinstance(t, str) and t.strip():
+                        p = Path(t)
+                        name = p.stem if p.is_file() else p.name
+                        conn["target"] = {"name": name, "path": str(p.resolve())}
+        return data
+
     def open_page(self, node: Node, view_type: str, stat_path: Path = None, data: dict = None, is_reference_click: bool = False):
         if is_reference_click:
             new_state = PageState(node, view_type, stat_path=stat_path, data=data, prev=self.current_state)
@@ -206,7 +360,7 @@ class DnDStatManager(tk.Tk):
             self.current_state = self.current_state.prev; self._show_current_state_view()
 
     def _show_current_state_view(self):
-        for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame]: panel.pack_forget()
+        for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame, self.map_graph_viewer]: panel.pack_forget()
         if not self.current_state: return
         if self.current_state.prev is None: self.back_btn.pack_forget()
         else: self.back_btn.pack(side=tk.LEFT, padx=10, pady=2)
@@ -217,6 +371,7 @@ class DnDStatManager(tk.Tk):
             self.stat_viewer.pack(fill=tk.BOTH, expand=True)
             try:
                 with open(state.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+                data = self._inflate_refs(data)
                 self.stat_viewer.render_monster(data, back_cb=self.navigate_back)
                 self.stat_viewer.add_top_buttons(state.node.path, self.view_full_portrait, lambda d: self.display_monster(state.node, edit_mode=True, back_cb=self.navigate_back))
             except Exception as e: print(f"Error loading sheet: {e}")
@@ -225,6 +380,9 @@ class DnDStatManager(tk.Tk):
             self.combat_viewer.pack(fill=tk.BOTH, expand=True)
             try:
                 with open(state.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+                data = self._inflate_refs(data)
+                if hasattr(self.combat_viewer, 'original_data'):
+                    delattr(self.combat_viewer, 'original_data')
                 self.combat_viewer.render_combat(data, state.node.path)
             except Exception as e: print(f"Error loading combat: {e}")
 
@@ -251,6 +409,7 @@ class DnDStatManager(tk.Tk):
                 json.dump(default_data, open(stat_path, "w", encoding="utf-8"), indent=4); state.node.stat_path = stat_path
             try:
                 with open(stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+                data = self._inflate_refs(data)
                 if state.view_type == "location": self.stat_viewer.render_location(data, back_cb=self.navigate_back)
                 else: self.stat_viewer.render_event(data, back_cb=self.navigate_back)
                 self.stat_viewer.add_location_top_buttons(state.node.path, lambda p: self._open_campaign_node_edit(state.node, stat_path, data, state.view_type == "location"))
@@ -260,13 +419,20 @@ class DnDStatManager(tk.Tk):
             self.stat_viewer.pack(fill=tk.BOTH, expand=True)
             try:
                 with open(state.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+                data = self._inflate_refs(data)
                 self.stat_viewer.render_object(data, back_cb=self.navigate_back)
                 self.stat_viewer.add_location_top_buttons(state.node.path, lambda p: self.open_object_edit(state.node, state.stat_path, data))
             except Exception as e: print(f"Error loading object: {e}")
+
+        elif state.view_type == "root_folder" and state.node.path.resolve() == self.map_dir.resolve():
+            self.map_graph_viewer.pack(fill=tk.BOTH, expand=True)
+            self.map_graph_viewer.draw_graph()
+            return
+        
         else:
             self.placeholder_frame.pack(fill=tk.BOTH, expand=True); self.placeholder_lbl.config(text=f"Location Directory Zone: '{state.node.name}'\nPath: {state.node.path}")
 
-    # Parameterized generic query chips trackers
+    # chips trackers
     def _add_qblock_generic(self, storage, val, render_cb, query_cb): storage.append(val); render_cb(); query_cb()
     def _remove_qblock_generic(self, storage, idx, render_cb, query_cb): storage.pop(idx); render_cb(); query_cb()
     def _toggle_qblock_generic(self, storage, idx, render_cb, query_cb): storage[idx] = "OR" if storage[idx] == "AND" else "AND"; render_cb(); query_cb()
@@ -384,7 +550,8 @@ class DnDStatManager(tk.Tk):
             w = cls(f, **kw); w.grid(row=row_idx, column=1, pady=8, sticky="w"); row_idx += 1; return w
         min_v = factory("Minimum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
         max_v = factory("Maximum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180); max_v.set(12)
-        sch_v = factory("School:", ttk.Combobox, values=["All"] + list(utils.SCHOOL_MAP.values()), state="readonly", width=22); sch_v.set("All")
+        school_options = ["All"] + list(utils.SCHOOL_MAP.values())
+        sch_v = factory("School:", ttk.Combobox, values=school_options, state="readonly", width=22); sch_v.set("All")
         dmg_v = factory("Damage Type:", ttk.Combobox, values=["All", "Acid", "Bludgeoning", "Cold", "Fire", "Force", "Lightning", "Necrotic", "Piercing", "Poison", "Psychic", "Radiant", "Slashing", "Thunder"], state="readonly", width=22); dmg_v.set("All")
         save_v = factory("Saving Throw:", ttk.Combobox, values=["All", "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"], state="readonly", width=22); save_v.set("All")
         conc_v = factory("Concentration:", ttk.Combobox, values=["All", "Yes", "No"], state="readonly", width=22); conc_v.set("All")
@@ -476,8 +643,9 @@ class DnDStatManager(tk.Tk):
         if not node or not node.stat_path: return
         try:
             with open(node.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+            data = self._inflate_refs(data)
             l_name = node.path.parent.parent.name if len(node.path.parts) >= 3 else "Unknown"
-            if edit_mode: self.stat_viewer.render_edit_mode(data, node.path, l_name, self.save_monster_edits, lambda: self.display_monster(node, edit_mode=False, back_cb=back_cb), add_existing_object_cb=lambda r: EntitySelectionDialog(self, self.objects_dir, "Objects", r))
+            if edit_mode: self.stat_viewer.render_edit_mode(data, node.path, l_name, self.save_monster_edits, lambda: self.display_monster(node, edit_mode=False, back_cb=back_cb), add_existing_object_cb=lambda r: EntitySelectionDialog(self, self.objects_dir, "Objects", lambda name: r(SyncRef(name, str((self.objects_dir / f"{name}.json").resolve())))))
             else:
                 self.stat_viewer.render_monster(data, back_cb=back_cb)
                 self.stat_viewer.add_top_buttons(node.path, self.view_full_portrait, lambda d: self.display_monster(node, edit_mode=True, back_cb=back_cb))
@@ -499,6 +667,9 @@ class DnDStatManager(tk.Tk):
         if not node or not node.stat_path: return
         try:
             with open(node.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+            data = self._inflate_refs(data)
+            if hasattr(self.combat_viewer, 'original_data'):
+                delattr(self.combat_viewer, 'original_data')
             self.combat_viewer.render_combat(data, node.path)
         except Exception as e: print(f"Failed to load combat: {e}")
 
@@ -520,16 +691,43 @@ class DnDStatManager(tk.Tk):
         self.open_page(Node(name=safe, path=g_dir, is_entity=True, level=1, stat_path=t_json), view_type="combat", stat_path=t_json, is_reference_click=False)
 
     def _combat_open_statblock(self, target_name, folder_type):
-        g_path = self.root_dir / folder_type / target_name; jsons = list(g_path.glob("*.json"))
-        if jsons: self.open_page(Node(name=target_name, path=g_path, is_entity=True, level=1), view_type="monster" if folder_type == "Monsters" else "npc", stat_path=jsons[0], is_reference_click=True)
+        # FIX COMBAT PARTICIPANTS AUTO-SAVE: Commit UI workspace properties 
+        # down to disk before switching views so active items are never discarded
+        if self.combat_viewer.winfo_ismapped():
+            self.combat_viewer._sync_all_rows()
+            c_data = self._serialize_refs(self.combat_viewer.current_data)
+            try:
+                json.dump(c_data, open(self.combat_viewer.combat_dir / f"{self.combat_viewer.combat_dir.name}.json", "w", encoding="utf-8"), indent=4)
+            except: pass
+
+        p = Path(target_name)
+        if p.exists():
+            jsons = list(p.glob("*.json")) if p.is_dir() else [p]
+            if jsons: self.open_page(Node(name=p.name, path=p, is_entity=True, level=1, stat_path=jsons[0]), view_type="monster" if "monsters" in str(p).lower() else "npc", stat_path=jsons[0], is_reference_click=True)
+        else:
+            g_path = self.root_dir / folder_type / target_name; jsons = list(g_path.glob("*.json"))
+            if jsons: self.open_page(Node(name=target_name, path=g_path, is_entity=True, level=1), view_type="monster" if folder_type == "Monsters" else "npc", stat_path=jsons[0], is_reference_click=True)
 
     def _combat_add_bestiary(self, combat_dir, callback):
-        MonsterSearchDialog(self, self.monster_index, lambda m: callback(m["name"], "Monsters", self._get_entity_hp(m["name"], "Monsters")))
-    def _combat_add_camp_mon(self, callback): EntitySelectionDialog(self, self.monsters_dir, "Monsters", lambda tn: callback(tn, "Monsters", self._get_entity_hp(tn, "Monsters")))
-    def _combat_add_camp_npc(self, callback): EntitySelectionDialog(self, self.npcs_dir, "NPCs", lambda tn: callback(tn, "NPCs", self._get_entity_hp(tn, "NPCs")))
+        def on_selected(m):
+            g_dir, s_name = downloader.download_monster_data(m, self.monsters_dir)
+            if g_dir:
+                self.refresh_tree_silent()
+                callback(str(g_dir.resolve()), "Monsters")
+        MonsterSearchDialog(self, self.monster_index, on_selected)
+
+    def _combat_add_camp_mon(self, callback): 
+        EntitySelectionDialog(self, self.monsters_dir, "Monsters", lambda tn: callback(str((self.monsters_dir / tn).resolve()), "Monsters"))
+
+    def _combat_add_camp_npc(self, callback): 
+        EntitySelectionDialog(self, self.npcs_dir, "NPCs", lambda tn: callback(str((self.npcs_dir / tn).resolve()), "NPCs"))
 
     def _get_entity_hp(self, target_name, folder_category):
-        gp = self.root_dir / folder_category / target_name / f"{target_name}.json"
+        p = Path(target_name)
+        if p.exists():
+            gp = list(p.glob("*.json"))[0] if p.is_dir() else p
+        else:
+            gp = self.root_dir / folder_category / target_name / f"{target_name}.json"
         return json.load(open(gp, "r", encoding="utf-8")).get("hp", {}).get("average", 10) if gp.exists() else 10
 
     def create_new_npc(self, parent_path: Path):
@@ -553,6 +751,7 @@ class DnDStatManager(tk.Tk):
         old_name, nn = old_dir.name, new_data.get("name", "Unknown")
         ns = "".join([c for c in nn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip() or "Unnamed"
         g_dir = old_dir
+        old_path = old_dir.resolve()
         if ns != old_name:
             target = g_dir.parent / ns
             if target.exists() and target != g_dir: 
@@ -560,14 +759,19 @@ class DnDStatManager(tk.Tk):
                 return
             if (g_dir / f"{old_name}.json").exists(): (g_dir / f"{old_name}.json").rename(g_dir / f"{ns}.json")
             g_dir.rename(target); g_dir = target
+            
+        new_data = self._serialize_refs(new_data)
         fj = g_dir / f"{ns}.json"; json.dump(new_data, open(fj, "w", encoding="utf-8"), indent=4)
-        self.sync_reciprocal_relations(fj); self.refresh_tree_silent()
+        new_path = g_dir.resolve()
+        self.sync_reciprocal_relations(old_path_prefix=old_path, new_path_prefix=new_path, saved_path=fj)
+        self.refresh_tree_silent()
         self.open_page(Node(name=nn, path=g_dir, is_entity=True, level=1, stat_path=fj), view_type="monster" if "Monsters" in str(g_dir) else "npc", stat_path=fj, is_reference_click=False)
 
     def save_combat_edits(self, combat_dir: Path, new_data: dict):
         old_name, nn = combat_dir.name, new_data.get("name", "Unknown Combat")
         ns = "".join([c for c in nn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip() or "Unnamed"
         g_dir = combat_dir
+        old_path = combat_dir.resolve()
         if ns != old_name:
             target = g_dir.parent / ns
             if target.exists() and target != g_dir: 
@@ -575,7 +779,11 @@ class DnDStatManager(tk.Tk):
                 return
             if (g_dir / f"{old_name}.json").exists(): (g_dir / f"{old_name}.json").rename(g_dir / f"{ns}.json")
             g_dir.rename(target); g_dir = target
+            
+        new_data = self._serialize_refs(new_data)
         fj = g_dir / f"{ns}.json"; json.dump(new_data, open(fj, "w", encoding="utf-8"), indent=4)
+        new_path = g_dir.resolve()
+        self.sync_reciprocal_relations(old_path_prefix=old_path, new_path_prefix=new_path, saved_path=fj)
         self.refresh_tree_silent()
         self.open_page(Node(name=nn, path=g_dir, is_entity=True, level=1, stat_path=fj), view_type="combat", stat_path=fj, is_reference_click=False)
 
@@ -669,18 +877,20 @@ class DnDStatManager(tk.Tk):
             if not is_act and node.name not in ["Map", "Events", "Objects", "Spells", "Monsters", "NPCs", "Combats"]:
                 del_btn = tk.Label(row, text="X", bg="#fae6c5", fg="#ff4d4d", font=("Arial", 16, "bold"), cursor="hand2"); del_btn.pack(side=tk.RIGHT, padx=15)
                 del_btn.bind("<Enter>", lambda e: e.widget.configure(bg="#4a2222", fg="#ffffff")); del_btn.bind("<Leave>", lambda e: e.widget.configure(bg="#f5e6ce" if row.cget("bg") == "#f5e6ce" else "#fae6c5", fg="#ff4d4d"))
-                def on_del(e, n=node):
-                    if messagebox.askyesno("Confirm Delete", f"Delete permanently '{n.name}'?"):
+                def on_del(e, node=node):
+                    if messagebox.askyesno("Confirm Delete", f"Delete permanently '{node.name}'?"):
                         try:
-                            if n.path.is_file():
-                                if n.path.parent == self.spells_dir:
+                            target_path = node.path.resolve()
+                            if node.path.is_file():
+                                if node.path.parent == self.spells_dir:
                                     try:
-                                        self.spells_index = [s for s in self.spells_index if s["name"].lower() != json.load(open(n.stat_path, "r", encoding="utf-8")).get("name", "").lower()]
+                                        self.spells_index = [s for s in self.spells_index if s["name"].lower() != json.load(open(node.stat_path, "r", encoding="utf-8")).get("name", "").lower()]
                                         json.dump(self.spells_index, open("spells.json", "w", encoding="utf-8"), indent=4); self.stat_viewer.set_spells_index(self.spells_index)
                                     except: pass
-                                n.path.unlink()
-                            else: shutil.rmtree(n.path)
-                            self.sync_reciprocal_relations(None); self.refresh_tree_silent(); self.clear_viewer_and_tree()
+                                node.path.unlink()
+                            else: shutil.rmtree(node.path)
+                            self.sync_reciprocal_relations(delete_path_prefix=target_path)
+                            self.refresh_tree_silent(); self.clear_viewer_and_tree()
                         except Exception as ex: messagebox.showerror("Error", f"Failed: {ex}")
                 del_btn.bind("<Button-1>", on_del)
 
@@ -753,6 +963,23 @@ class DnDStatManager(tk.Tk):
     def on_location_link_clicked(self, name, category):
         if self.stat_viewer.edit_container.winfo_ismapped():
             self.current_state.view_type = "location_edit" if self.current_state.view_type == "location" else "event_edit"
+        
+        p = Path(name)
+        if p.exists():
+            p_str = str(p.resolve()).lower()
+            if "monsters" in p_str or "npcs" in p_str:
+                jsons = list(p.glob("*.json"))
+                if jsons: self.open_page(Node(name=p.name, path=p, is_entity=True, level=1, stat_path=jsons[0]), view_type="monster" if "monsters" in p_str else "npc", stat_path=jsons[0], is_reference_click=True)
+            elif "combats" in p_str:
+                jsons = list(p.glob("*.json"))
+                if jsons: self.open_page(Node(name=p.name, path=p, is_entity=True, level=1, stat_path=jsons[0]), view_type="combat", stat_path=jsons[0], is_reference_click=True)
+            elif "objects" in p_str:
+                self.open_page(Node(name=p.stem, path=p, is_entity=True, level=1, stat_path=p), view_type="object", stat_path=p, is_reference_click=True)
+            elif "map" in p_str or "events" in p_str:
+                sj = p / f"{p.name}.json"
+                self.open_page(Node(name=p.name, path=p, is_entity=False, level=len(p.relative_to(self.events_dir if "events" in p_str else self.map_dir).parts), stat_path=sj if sj.exists() else None), view_type="event" if "events" in p_str else "location", is_reference_click=True)
+            return
+
         if category in ["Monsters", "NPCs"]:
             jsons = list(((self.monsters_dir if category == "Monsters" else self.npcs_dir) / name).glob("*.json"))
             if jsons: self.open_page(Node(name=name, path=jsons[0].parent, is_entity=True, level=1, stat_path=jsons[0]), view_type="monster" if category == "Monsters" else "npc", stat_path=jsons[0], is_reference_click=True)
@@ -771,10 +998,16 @@ class DnDStatManager(tk.Tk):
             tp = self.objects_dir / f"{name}.json"
             if tp.exists(): self.open_page(Node(name=tp.stem, path=tp, is_entity=True, level=1, stat_path=tp), view_type="object", stat_path=tp, is_reference_click=True)
 
-    # Parameterized configuration sheet closure builder for Locations and Events
+    def _find_dir_by_name(self, name, base_dir):
+        target = base_dir / name
+        if target.exists(): return target.resolve()
+        found = list(base_dir.rglob(name))
+        if found and found[0].is_dir(): return found[0].resolve()
+        return target.resolve()
+
     def _open_campaign_node_edit(self, node, stat_path, data, is_location):
-        """Unified edit dashboard renderer handling input form updates symmetrically for campaign sub-elements maps/events."""
         def on_save(current_dir, updated_data):
+            updated_data = self._serialize_refs(updated_data)
             with open(stat_path, "w", encoding="utf-8") as f: 
                 json.dump(updated_data, f, indent=4)
             
@@ -782,6 +1015,7 @@ class DnDStatManager(tk.Tk):
             nn = updated_data.get("name", old)
             ns = "".join([c for c in nn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip() or "Unnamed"
             fd, fj = current_dir, stat_path
+            old_path = current_dir.resolve()
             
             if ns != old:
                 target = current_dir.parent / ns
@@ -793,104 +1027,219 @@ class DnDStatManager(tk.Tk):
                 current_dir.rename(target)
                 fd, fj = target, target / f"{ns}.json"
                 
-            self.sync_reciprocal_relations(fj)
+            new_path = fd.resolve()
+            self.sync_reciprocal_relations(old_path_prefix=old_path, new_path_prefix=new_path, saved_path=fj)
             self.refresh_tree_silent()
             self.open_page(Node(name=nn, path=fd, is_entity=False, level=len(fd.relative_to(self.map_dir if is_location else self.events_dir).parts), stat_path=fj), view_type="location" if is_location else "event", is_reference_click=False)
-
-        # FIXED: Re-established the correct nested callback closure to eliminate the undeclared 'm' variable
+        
         kw = {
             "data": data, 
             "location_dir" if is_location else "event_dir": stat_path.parent, 
             "save_callback": on_save, 
             "cancel_callback": lambda: self._show_current_state_view(),
-            "add_new_monster_cb": lambda r: MonsterSearchDialog(self, self.monster_index, lambda meta: r(downloader.download_monster_data(meta, self.monsters_dir)[1])),
-            "add_existing_monster_cb": lambda r: EntitySelectionDialog(self, self.monsters_dir, "Monsters", r),
-            "add_existing_npc_cb": lambda r: EntitySelectionDialog(self, self.npcs_dir, "NPCs", r),
-            "add_existing_combat_cb": lambda r: EntitySelectionDialog(self, self.combats_dir, "Combats", r),
-            "add_existing_object_cb": lambda r: EntitySelectionDialog(self, self.objects_dir, "Objects", r),
-            "add_connection_cb": lambda r: EntitySelectionDialog(self, self.map_dir if is_location else self.events_dir, "Locations" if is_location else "Events", r)
+            "add_new_monster_cb": lambda r: MonsterSearchDialog(self, self.monster_index, lambda meta: r(SyncRef(meta["name"], str(downloader.download_monster_data(meta, self.monsters_dir)[0].resolve())))),
+            "add_existing_monster_cb": lambda r: EntitySelectionDialog(self, self.monsters_dir, "Monsters", lambda name: r(SyncRef(name, str((self.monsters_dir / name).resolve())))),
+            "add_existing_npc_cb": lambda r: EntitySelectionDialog(self, self.npcs_dir, "NPCs", lambda name: r(SyncRef(name, str((self.npcs_dir / name).resolve())))),
+            "add_existing_combat_cb": lambda r: EntitySelectionDialog(self, self.combats_dir, "Combats", lambda name: r(SyncRef(name, str((self.combats_dir / name).resolve())))),
+            "add_existing_object_cb": lambda r: EntitySelectionDialog(self, self.objects_dir, "Objects", lambda name: r(SyncRef(name, str((self.objects_dir / f"{name}.json").resolve())))),
+            # FIXED: Removed the trailing .resolve() syntax artifact from the end of this line
+            "add_connection_cb": lambda r: EntitySelectionDialog(self, self.map_dir if is_location else self.events_dir, "Locations" if is_location else "Events", lambda name: r(SyncRef(name, str(self._find_dir_by_name(name, self.map_dir if is_location else self.events_dir)))))
         }
         if is_location: 
-            kw["add_existing_event_cb"] = lambda r: EntitySelectionDialog(self, self.events_dir, "Events", r)
+            kw["add_existing_event_cb"] = lambda r: EntitySelectionDialog(self, self.events_dir, "Events", lambda name: r(SyncRef(name, str(self._find_dir_by_name(name, self.events_dir)))))
         else: 
-            kw["add_existing_location_cb"] = lambda r: EntitySelectionDialog(self, self.map_dir, "Locations", r)
+            kw["add_existing_location_cb"] = lambda r: EntitySelectionDialog(self, self.map_dir, "Locations", lambda name: r(SyncRef(name, str(self._find_dir_by_name(name, self.map_dir)))))
             
         getattr(self.stat_viewer, f"render_{'location' if is_location else 'event'}_edit_mode")(**kw)
 
     def open_location_edit(self, node, stat_path, data): self._open_campaign_node_edit(node, stat_path, data, True)
     def open_event_edit(self, node, stat_path, data): self._open_campaign_node_edit(node, stat_path, data, False)
 
-    def sync_reciprocal_relations(self, saved_path=None):
-        loc_data_map, evt_data_map = {}, {}
+    def _has_path_ref(self, data_list, target_path):
+        target_path_norm = str(Path(target_path).resolve()).lower()
+        if isinstance(data_list, list):
+            for item in data_list:
+                if isinstance(item, dict):
+                    p_val = item.get("path", item.get("target", ""))
+                    if isinstance(p_val, dict): p_val = p_val.get("path", p_val.get("target", ""))
+                    if isinstance(p_val, str) and str(Path(p_val).resolve()).lower() == target_path_norm: return True
+                elif isinstance(item, str):
+                    if str(Path(item).resolve()).lower() == target_path_norm: return True
+        return False
+
+    def _add_path_ref(self, data_list, target_name, target_path):
+        if not self._has_path_ref(data_list, target_path):
+            data_list.append({"name": target_name, "path": str(Path(target_path).resolve())})
+            return True
+        return False
+
+    def sync_reciprocal_relations(self, old_path_prefix=None, new_path_prefix=None, delete_path_prefix=None, saved_path=None):
+        all_json_files = list(self.root_dir.rglob("*.json"))
+        
+        if delete_path_prefix:
+            delete_str = str(Path(delete_path_prefix).resolve()).lower()
+            for p in all_json_files:
+                try:
+                    with open(p, "r", encoding="utf-8") as f: file_data = json.load(f)
+                    if self._recursive_delete_refs(file_data, delete_str):
+                        with open(p, "w", encoding="utf-8") as f: json.dump(file_data, f, indent=4)
+                except Exception as e: print(f"Error filtering references: {e}")
+
+        if old_path_prefix and new_path_prefix:
+            old_str = str(Path(old_path_prefix).resolve()).lower()
+            new_str = str(Path(new_path_prefix).resolve())
+            if old_str != new_str.lower():
+                for p in all_json_files:
+                    try:
+                        with open(p, "r", encoding="utf-8") as f: file_data = json.load(f)
+                        if self._recursive_update_refs(file_data, old_str, new_str):
+                            with open(p, "w", encoding="utf-8") as f: json.dump(file_data, f, indent=4)
+                    except Exception as e: print(f"Error mapping references: {e}")
+
+        # RULE 1 PATHS SYMMETRY ENGINE: Mesh cross-relations bidirectionally
+        loc_map, evt_map, creature_map, obj_map = {}, {}, {}, {}
         for p in self.map_dir.rglob("*.json"):
-            try: loc_data_map[p] = json.load(open(p, "r", encoding="utf-8"))
+            try:
+                with open(p, "r", encoding="utf-8") as f: loc_map[str(p.parent.resolve()).lower()] = (p, json.load(f))
             except: pass
         for p in self.events_dir.rglob("*.json"):
-            try: evt_data_map[p] = json.load(open(p, "r", encoding="utf-8"))
+            try:
+                with open(p, "r", encoding="utf-8") as f: evt_map[str(p.parent.resolve()).lower()] = (p, json.load(f))
             except: pass
-
-        for lp, ld in loc_data_map.items():
-            l_name = ld.get("name", lp.parent.name)
-            for e_name in ld.setdefault("events", []):
-                for ep, ed in evt_data_map.items():
-                    if ed.get("name") == e_name and l_name not in ed.setdefault("locations", []): ed["locations"].append(l_name)
-        for ep, ed in evt_data_map.items():
-            e_name = ed.get("name", ep.parent.name)
-            for l_name in ed.setdefault("locations", []):
-                for lp, ld in loc_data_map.items():
-                    if ld.get("name") == l_name and e_name not in ld.setdefault("events", []): ld["events"].append(e_name)
-
-        ex_loc, ex_evt = {ld.get("name", lp.parent.name) for lp, ld in loc_data_map.items()}, {ed.get("name", ep.parent.name) for ep, ed in evt_data_map.items()}
-        for lp, ld in loc_data_map.items(): ld["events"] = [e for e in ld["events"] if e in ex_evt]; json.dump(ld, open(lp, "w", encoding="utf-8"), indent=4)
-        for ep, ed in evt_data_map.items(): ed["locations"] = [l for l in ed["locations"] if l in ex_loc]; json.dump(ed, open(ep, "w", encoding="utf-8"), indent=4)
-
-        creature_map, obj_map = {}, {}
         for p in list(self.monsters_dir.rglob("*.json")) + list(self.npcs_dir.rglob("*.json")):
-            try: creature_map[p] = json.load(open(p, "r", encoding="utf-8"))
+            try:
+                with open(p, "r", encoding="utf-8") as f: creature_map[str(p.parent.resolve()).lower()] = (p, json.load(f))
             except: pass
         for p in self.objects_dir.glob("*.json"):
-            try: obj_map[p] = json.load(open(p, "r", encoding="utf-8"))
+            try:
+                with open(p, "r", encoding="utf-8") as f: obj_map[str(p.resolve()).lower()] = (p, json.load(f))
             except: pass
 
-        ex_c, ex_o = {cd.get("name", cp.parent.name) for cp, cd in creature_map.items()}, {od.get("name", op.stem) for op, od in obj_map.items()}
-        
-        # FIX: Explicitly initialize fallback array boundaries right away to completely neutralize KeyErrors
-        for cd in creature_map.values(): cd.setdefault("objects", [])
-        for od in obj_map.values(): od.setdefault("owners", [])
+        saved_norm = str(Path(saved_path).resolve()).lower() if saved_path else None
+        if saved_norm:
+            saved_p_obj = Path(saved_norm)
+            f_key = str(saved_p_obj.parent.resolve()).lower()
+            o_key = str(saved_p_obj.resolve()).lower()
+            s_str = str(saved_p_obj).lower()
 
-        if saved_path and saved_path.parent == self.objects_dir:
-            so = obj_map.get(Path(saved_path))
-            if so:
-                on, own = so.get("name", Path(saved_path).stem), so.get("owners", [])
-                for cp, cd in creature_map.items():
-                    cn = cd.get("name", cp.parent.name)
-                    if cn in own and on not in cd["objects"]: cd["objects"].append(on)
-                    elif cn not in own and on in cd["objects"]: cd["objects"].remove(on)
-                    
-        # FIX: Enforce parent constraint checks so Location/Event saves don't accidentally intercept creature updates
-        elif saved_path and (self.monsters_dir in Path(saved_path).parents or self.npcs_dir in Path(saved_path).parents):
-            sc = creature_map.get(Path(saved_path))
-            if sc:
-                cn, cob = sc.get("name", Path(saved_path).parent.name), sc.get("objects", [])
-                for op, od in obj_map.items():
-                    on = od.get("name", op.stem)
-                    if on in cob and cn not in od["owners"]: od["owners"].append(cn)
-                    elif on not in cob and cn in od["owners"]: od["owners"].remove(cn)
+            if f_key in loc_map and "map" in s_str:
+                l_file, l_data = loc_map[f_key]
+                l_name = l_data.get("name", saved_p_obj.parent.name)
+                for e_k, (e_file, e_data) in evt_map.items():
+                    e_name = e_data.get("name", Path(e_file).parent.name)
+                    if self._has_path_ref(l_data.get("events", []), e_k):
+                        if self._add_path_ref(e_data.setdefault("locations", []), l_name, saved_p_obj.parent):
+                            json.dump(e_data, open(e_file, "w", encoding="utf-8"), indent=4)
+                    else:
+                        orig = len(e_data.get("locations", []))
+                        e_data["locations"] = [i for i in e_data.get("locations", []) if not (isinstance(i, dict) and str(Path(i.get("path", "")).resolve()).lower() == f_key or isinstance(i, str) and str(Path(i).resolve()).lower() == f_key)]
+                        if len(e_data["locations"]) != orig: json.dump(e_data, open(e_file, "w", encoding="utf-8"), indent=4)
+
+            elif f_key in evt_map and "events" in s_str:
+                e_file, e_data = evt_map[f_key]
+                e_name = e_data.get("name", saved_p_obj.parent.name)
+                for l_k, (l_file, l_data) in loc_map.items():
+                    l_name = l_data.get("name", Path(l_file).parent.name)
+                    if self._has_path_ref(e_data.get("locations", []), l_k):
+                        if self._add_path_ref(l_data.setdefault("events", []), e_name, saved_p_obj.parent):
+                            json.dump(l_data, open(l_file, "w", encoding="utf-8"), indent=4)
+                    else:
+                        orig = len(l_data.get("events", []))
+                        l_data["events"] = [i for i in l_data.get("events", []) if not (isinstance(i, dict) and str(Path(i.get("path", "")).resolve()).lower() == f_key or isinstance(i, str) and str(Path(i).resolve()).lower() == f_key)]
+                        if len(l_data["events"]) != orig: json.dump(l_data, open(l_file, "w", encoding="utf-8"), indent=4)
+
+            elif f_key in creature_map and ("monsters" in s_str or "npcs" in s_str):
+                c_file, c_data = creature_map[f_key]
+                c_name = c_data.get("name", saved_p_obj.parent.name)
+                for o_k, (o_file, o_data) in obj_map.items():
+                    o_name = o_data.get("name", Path(o_file).stem)
+                    if self._has_path_ref(c_data.get("objects", []), o_k):
+                        if self._add_path_ref(o_data.setdefault("owners", []), c_name, saved_p_obj.parent):
+                            json.dump(o_data, open(o_file, "w", encoding="utf-8"), indent=4)
+                    else:
+                        orig = len(o_data.get("owners", []))
+                        o_data["owners"] = [i for i in o_data.get("owners", []) if not (isinstance(i, dict) and str(Path(i.get("path", "")).resolve()).lower() == f_key or isinstance(i, str) and str(Path(i).resolve()).lower() == f_key)]
+                        if len(o_data["owners"]) != orig: json.dump(o_data, open(o_file, "w", encoding="utf-8"), indent=4)
+
+            elif o_key in obj_map and "objects" in s_str:
+                o_file, o_data = obj_map[o_key]
+                o_name = o_data.get("name", saved_p_obj.stem)
+                for c_k, (c_file, c_data) in creature_map.items():
+                    c_name = c_data.get("name", Path(c_file).parent.name)
+                    if self._has_path_ref(o_data.get("owners", []), c_k):
+                        if self._add_path_ref(c_data.setdefault("objects", []), o_name, saved_p_obj):
+                            json.dump(c_data, open(c_file, "w", encoding="utf-8"), indent=4)
+                    else:
+                        orig = len(c_data.get("objects", []))
+                        c_data["objects"] = [i for i in c_data.get("objects", []) if not (isinstance(i, dict) and str(Path(i.get("path", "")).resolve()).lower() == o_key or isinstance(i, str) and str(Path(i).resolve()).lower() == o_key)]
+                        if len(c_data["objects"]) != orig: json.dump(c_data, open(c_file, "w", encoding="utf-8"), indent=4)
         else:
-            for cp, cd in creature_map.items():
-                cn = cd.get("name", cp.parent.name)
-                for o in cd["objects"]:
-                    for op, od in obj_map.items():
-                        if od.get("name") == o and cn not in od["owners"]: od["owners"].append(cn)
-            for op, od in obj_map.items():
-                on = od.get("name", op.stem)
-                for c in od["owners"]:
-                    for cp, cd in creature_map.items():
-                        if cd.get("name") == c and on not in cd["objects"]: cd["objects"].append(on)
+            for l_k, (l_file, l_data) in loc_map.items():
+                l_name = l_data.get("name", Path(l_file).parent.name)
+                for e_k, (e_file, e_data) in evt_map.items():
+                    e_name = e_data.get("name", Path(e_file).parent.name)
+                    if self._has_path_ref(e_data.get("locations", []), l_k) or self._has_path_ref(l_data.get("events", []), e_k):
+                        if self._add_path_ref(l_data.setdefault("events", []), e_name, Path(e_file).parent): json.dump(l_data, open(l_file, "w", encoding="utf-8"), indent=4)
+                        if self._add_path_ref(e_data.setdefault("locations", []), l_name, Path(l_file).parent): json.dump(e_data, open(e_file, "w", encoding="utf-8"), indent=4)
+            for c_k, (c_file, c_data) in creature_map.items():
+                c_name = c_data.get("name", Path(c_file).parent.name)
+                for o_k, (o_file, o_data) in obj_map.items():
+                    o_name = o_data.get("name", Path(o_file).stem)
+                    if self._has_path_ref(o_data.get("owners", []), c_k) or self._has_path_ref(c_data.get("objects", []), o_k):
+                        if self._add_path_ref(c_data.setdefault("objects", []), o_name, Path(o_file)): json.dump(c_data, open(c_file, "w", encoding="utf-8"), indent=4)
+                        if self._add_path_ref(o_data.setdefault("owners", []), c_name, Path(c_file).parent): json.dump(o_data, open(o_file, "w", encoding="utf-8"), indent=4)
 
-        for cp, cd in creature_map.items(): cd["objects"] = [o for o in cd["objects"] if o in ex_o]; json.dump(cd, open(cp, "w", encoding="utf-8"), indent=4)
-        for op, od in obj_map.items(): od["owners"] = [o for o in od["owners"] if o in ex_c]; json.dump(od, open(op, "w", encoding="utf-8"), indent=4)
+    def _recursive_delete_refs(self, data, delete_str):
+        modified = False
+        if isinstance(data, dict):
+            for k, v in list(data.items()):
+                if isinstance(v, str) and v.lower().startswith(delete_str):
+                    data[k] = ""; modified = True
+                elif isinstance(v, list):
+                    new_list = []
+                    for item in v:
+                        if isinstance(item, str) and item.lower().startswith(delete_str):
+                            modified = True
+                        elif isinstance(item, dict):
+                            item_path = item.get("path", item.get("target", item.get("name", "")))
+                            if isinstance(item_path, dict): item_path = item_path.get("path", item_path.get("target", ""))
+                            if isinstance(item_path, str) and item_path.lower().startswith(delete_str): modified = True
+                            else:
+                                civ = self._recursive_delete_refs(item, delete_str)
+                                if civ: modified = True
+                                new_list.append(item)
+                        else: new_list.append(item)
+                    data[k] = new_list
+                elif isinstance(v, dict):
+                    if self._recursive_delete_refs(v, delete_str): modified = True
+        return modified
 
+    def _recursive_update_refs(self, data, old_str, new_str):
+        modified = False
+        if isinstance(data, dict):
+            for k in ["path", "target"]:
+                if k in data and isinstance(data[k], str) and data[k].lower().startswith(old_str):
+                    data[k] = new_str + data[k][len(old_str):]
+                    modified = True
+                    if "name" in data:
+                        p = Path(data[k])
+                        data["name"] = p.stem if p.is_file() else p.name
+
+            for k, v in data.items():
+                if isinstance(v, str):
+                    if k not in ["path", "target"] and v.lower().startswith(old_str):
+                        data[k] = new_str + v[len(old_str):]
+                        modified = True
+                elif isinstance(v, list):
+                    for i in range(len(v)):
+                        if isinstance(v[i], str) and v[i].lower().startswith(old_str):
+                            v[i] = new_str + v[i][len(old_str):]; modified = True
+                        elif isinstance(v[i], dict):
+                            if self._recursive_update_refs(v[i], old_str, new_str): modified = True
+                elif isinstance(v, dict):
+                    if self._recursive_update_refs(v, old_str, new_str): modified = True
+        return modified
+    
     def create_new_object(self):
         fn = simpledialog.askstring("Add Object", "Object name:")
         if not fn or not fn.strip(): return
@@ -905,12 +1254,14 @@ class DnDStatManager(tk.Tk):
 
     def open_object_edit(self, node, stat_path, data):
         def on_save(obj_file, updated_data):
+            updated_data = self._serialize_refs(updated_data)
             with open(stat_path, "w", encoding="utf-8") as f:
                 json.dump(updated_data, f, indent=4)
             old = stat_path.stem
             nn = updated_data.get("name", old)
             ns = "".join([c for c in nn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip() or "Unnamed"
             fj = stat_path
+            old_path = stat_path.resolve()
             
             if ns != old:
                 target = stat_path.parent / f"{ns}.json"
@@ -920,11 +1271,12 @@ class DnDStatManager(tk.Tk):
                 stat_path.rename(target)
                 fj = target
                 
-            self.sync_reciprocal_relations(fj)
+            new_path = fj.resolve()
+            self.sync_reciprocal_relations(old_path_prefix=old_path, new_path_prefix=new_path, saved_path=fj)
             self.refresh_tree_silent()
             self.open_page(Node(name=nn, path=fj, is_entity=True, level=1, stat_path=fj), view_type="object", stat_path=fj, is_reference_click=False)
             
-        self.stat_viewer.render_object_edit_mode(data, stat_path, on_save, lambda: self._show_current_state_view(), lambda r: EntitySelectionDialog(self, self.npcs_dir, "NPCs", r))
+        self.stat_viewer.render_object_edit_mode(data, stat_path, on_save, lambda: self._show_current_state_view(), lambda r: EntitySelectionDialog(self, self.npcs_dir, "NPCs", lambda name: r(SyncRef(name, str((self.npcs_dir / name).resolve())))))
 
 def main():
     parser = argparse.ArgumentParser()

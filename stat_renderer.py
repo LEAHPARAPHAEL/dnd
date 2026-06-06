@@ -5,10 +5,40 @@ import json
 import copy
 import utils
 from dialogs import SpellSearchDialog
+from pathlib import Path
+
+# ==================== CONDITIONS DATABASE ====================
+CONDITIONS_DB = {
+    "blinded": "A blinded creature can’t see and automatically fails any ability check that requires sight.\nAttack rolls against the creature have advantage, and the creature’s attack rolls have disadvantage.",
+    "charmed": "A charmed creature can’t attack the charmer or target the charmer with harmful abilities or magical effects.\nThe charmer has advantage on any ability check to interact socially with the creature.",
+    "deafened": "A deafened creature can’t hear and automatically fails any ability check that requires hearing.",
+    "frightened": "A frightened creature has disadvantage on ability checks and attack rolls while the source of its fear is within line of sight.\nThe creature can’t willingly move closer to the source of its fear.",
+    "grappled": "A grappled creature’s speed becomes 0, and it can’t benefit from any bonus to its speed.\nThe condition ends if the grappler is incapacitated (see the condition).\nThe condition also ends if an effect removes the grappled creature from the reach of the grappler or grappling effect, such as when a creature is hurled away by the thunderwave spell.",
+    "incapacitated": "An incapacitated creature can’t take actions or reactions.",
+    "invisible": "An invisible creature is impossible to see without the aid of magic or a special sense. For the purpose of hiding, the creature is heavily obscured. The creature’s location can be detected by any noise it makes or any tracks it leaves.\nAttack rolls against the creature have disadvantage, and the creature’s attack rolls have advantage.",
+    "paralyzed": "A paralyzed creature is incapacitated (see the condition) and can’t move or speak.\nThe creature automatically fails Strength and Dexterity saving throws.\nAttack rolls against the creature have advantage.\nAny attack that hits the creature is a critical hit if the attacker is within 5 feet of the creature.",
+    "petrified": "A petrified creature is transformed, along with any nonmagical object it is wearing or carrying, into a solid inanimate substance (usually stone). Its weight increases by a factor of ten, and it ceases aging.\nThe creature is incapacitated (see the condition), can’t move or speak, and is unaware of its surroundings.\nAttack rolls against the creature have advantage.\nThe creature automatically fails Strength and Dexterity saving throws.\nThe creature has resistance to all damage.\nThe creature is immune to poison and disease, although a poison or disease already in its system is suspended, not neutralized.",
+    "poisoned": "A poisoned creature has disadvantage on attack rolls and ability checks.",
+    "prone": "A prone creature’s only movement option is to crawl, unless it stands up and thereby ends the condition.\nThe creature has disadvantage on attack rolls.\nAn attack roll against the creature has advantage if the attacker is within 5 feet of the creature. Otherwise, the attack roll has disadvantage.",
+    "restrained": "A restrained creature’s speed becomes 0, and it can’t benefit from any bonus to its speed.\nAttack rolls against the creature have advantage, and the creature’s attack rolls have disadvantage.\nThe creature has disadvantage on Dexterity saving throws.",
+    "stunned": "A stunned creature is incapacitated (see the condition), can’t move, and can speak only falteringly.\nThe creature automatically fails Strength and Dexterity saving throws.\nAttack rolls against the creature have advantage.",
+    "unconscious": "An unconscious creature is incapacitated (see the condition), can’t move or speak, and is unaware of its surroundings\nThe creature drops whatever it’s holding and falls prone.\nThe creature automatically fails Strength and Dexterity saving throws.\nAttack rolls against the creature have advantage.\nAny attack that hits the creature is a critical hit if the attacker is within 5 feet of the creature.",
+    "exhaustion": "Some special abilities and environmental hazards, such as starvation and the long-­term effects of freezing or scorching temperatures, can lead to a special condition called exhaustion. Exhaustion is measured in six levels. An effect can give a creature one or more levels of exhaustion, as specified in the effect’s description.\n\nExhaustion Effects:\nLevel 1: Disadvantage on ability checks\nLevel 2: Speed halved\nLevel 3: Disadvantage on attack rolls and saving throws\nLevel 4: Hit point maximum halved\nLevel 5: Speed reduced to 0\nLevel 6: Death\n\nIf an already exhausted creature suffers another effect that causes exhaustion, its current level of exhaustion increases by the amount specified in the effect’s description.\n\nA creature suffers the effect of its current level of exhaustion as well as all lower levels. For example, a creature suffering level 2 exhaustion has its speed halved and has disadvantage on ability checks.\n\nAn effect that removes exhaustion reduces its level as specified in the effect’s description, with all exhaustion effects ending if a creature’s exhaustion level is reduced below 1.\n\nFinishing a long rest reduces a creature’s exhaustion level by 1, provided that the creature has also ingested some food and drink."
+}
+
+def clean_5etools_text_with_conditions(text):
+    if not isinstance(text, str):
+        return text
+    # Intercept condition references and wrap into condition tags before 5etools utility standardizes them
+    text = re.sub(r'{@condition ([^|}]+)[^}]*}', r'«CONDITION:\1»', text, flags=re.IGNORECASE)
+    return utils.clean_5etools_text(text)
+
 
 class AutoHeightText(tk.Text):
     def __init__(self, master=None, canvas_to_refresh=None, **kwargs):
         kwargs.setdefault("height", 1)
+        if "justify" in kwargs:
+            kwargs.pop("justify")  # Strip unsupported entry configs from native text elements
         super().__init__(master, **kwargs)
         self.canvas_to_refresh = canvas_to_refresh
         self._last_width = 0
@@ -28,78 +58,108 @@ class AutoHeightText(tk.Text):
             self.adjust_height()
             self.edit_modified(False)
 
-    def insert(self, *args, **kwargs):
-        super().insert(*args, **kwargs)
+    def insert(self, index, chars=None, *args, **kwargs):
+        # Translate integer indexing safely to text metrics index bounds
+        if isinstance(index, int):
+            index = "1.0" if index == 0 else f"1.0 + {index} chars"
+        if chars is None:
+            super().insert(index, *args, **kwargs)
+        else:
+            super().insert(index, chars, *args, **kwargs)
         self.adjust_height()
 
-    def delete(self, *args, **kwargs):
-        super().delete(*args, **kwargs)
+    def delete(self, index1, index2=None, *args, **kwargs):
+        if isinstance(index1, int):
+            index1 = "1.0"
+        if isinstance(index2, int) or index2 == tk.END:
+            index2 = tk.END
+        super().delete(index1, index2, *args, **kwargs)
         self.adjust_height()
 
-    # FIXED: Added destruction listener cleanup to prevent ghost size reservation bugs
-    def destroy(self):
-        self.canvas_to_refresh = None
-        self.unbind("<Configure>")
-        self.unbind("<KeyRelease>")
-        self.unbind("<<Modified>>")
-        super().destroy()
+    def get(self, index1=None, index2=None, *args, **kwargs):
+        if index1 is None:
+            return super().get("1.0", "end-1c")
+        return super().get(index1, index2, *args, **kwargs)
 
     def adjust_height(self):
-        # Prevent calculations if the widget has been detached or is clearing out
+        """Optimized layout engine that computes bounds strictly via text splits,
+        completely skipping expensive displayline lookups or sub-window checks.
+        """
         if not self.canvas_to_refresh:
             return
 
         try:
             font_obj = font.Font(font=self.cget("font"))
-            char_width = font_obj.measure("m")
-            line_height = font_obj.metrics("linespace") or 24
+            char_width = font_obj.measure("m") or 8
         except Exception:
             char_width = 8
-            line_height = 24
 
         w = self.winfo_width()
         chars_per_line = max(10, w // char_width) if w > 20 else 60
 
         text_content = self.get("1.0", "end-1c")
-        estimated_lines = 0
+        total_lines = 0
+        
         for line in text_content.split("\n"):
             if not line:
-                estimated_lines += 1
+                total_lines += 1
             else:
-                estimated_lines += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
+                total_lines += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
 
-        tk_lines = 1
-        try:
-            res = self.count("1.0", "end-1c", "displaylines")
-            display_lines = res[0] if isinstance(res, tuple) else res
-            if display_lines is not None:
-                tk_lines = max(tk_lines, display_lines)
-        except Exception:
-            pass
-
-        total_lines = max(estimated_lines, tk_lines)
-
-        windows = self.window_names()
-        if windows:
-            max_y = 0
-            for win in windows:
-                try:
-                    w_obj = self.nametowidget(win)
-                    y = w_obj.winfo_y()
-                    h = w_obj.winfo_height()
-                    if y + h > max_y:
-                        max_y = y + h
-                except Exception:
-                    pass
-            if max_y > 0:
-                needed_lines = int((max_y + 14 + line_height - 1) // line_height)
-                total_lines = max(total_lines, needed_lines)
+        total_lines = max(1, total_lines)
 
         if total_lines != int(self.cget("height")):
-            self.configure(height=max(1, total_lines))
+            self.configure(height=total_lines)
             if self.canvas_to_refresh:
                 self.canvas_to_refresh.update_idletasks()
                 self.canvas_to_refresh.configure(scrollregion=self.canvas_to_refresh.bbox("all"))
+
+
+class ChipFlowFrame(tk.Frame):
+    """A high-performance horizontal flow layout frame for spell chips.
+    It calculates boundaries instantly using required dimensions and flows components smoothly.
+    """
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self.widgets = []
+        self.bind("<Configure>", lambda e: self.rearrange())
+
+    def add_widget(self, w):
+        self.widgets.append(w)
+        self.rearrange()
+
+    def rearrange(self):
+        width = self.winfo_width()
+        if width <= 1:
+            self.after(10, self._do_rearrange)
+            return
+        self._do_rearrange()
+
+    def _do_rearrange(self):
+        width = self.winfo_width()
+        if width <= 1: return
+        
+        x, y = 0, 0
+        row_h = 0
+        for w in self.widgets:
+            if not w.winfo_exists(): continue
+            w_w = w.winfo_reqwidth()
+            w_h = w.winfo_reqheight()
+            
+            if x + w_w > width and x > 0:
+                x = 0
+                y += row_h + 4
+                row_h = 0
+                
+            w.place(x=x, y=y, width=w_w, height=w_h)
+            x += w_w + 6
+            row_h = max(row_h, w_h)
+            
+        total_h = y + row_h
+        if total_h < 30: total_h = 30
+        if int(self.cget("height")) != total_h:
+            self.config(height=total_h)
+
 
 class StatBlockRenderer(tk.Frame):
     def __init__(self, parent, *args, **kwargs):
@@ -128,7 +188,7 @@ class StatBlockRenderer(tk.Frame):
 
         self._setup_fonts_and_tags()
         self.v_scroll.config(command=self.text.yview)
-        self.text.bind("<Configure>", lambda e: [div.configure(width=max(10, e.width - 80)) for div in self.dividers])
+        self.text.bind("<Configure>", lambda e: [div.configure(width=max(10, e.width - 80)) for div in self.dividers if div.winfo_exists()])
 
     def set_spell_callback(self, cb): self.spell_callback = cb
     def set_spells_index(self, idx): self.spells_index = idx
@@ -146,22 +206,95 @@ class StatBlockRenderer(tk.Frame):
         self.text.tag_configure("body", font=self.body_font, foreground="black", spacing3=3)
         self.text.tag_configure("bold", font=self.body_bold, foreground="black")
         self.text.tag_configure("body_indented", font=self.body_font, foreground="black", lmargin1=20, lmargin2=20, spacing3=8)
-        
-
         self.text.tag_configure("spell_link", font=self.body_font, foreground="#4a90e2", underline=True)
         
-        self.text.tag_bind("spell_link", "<Enter>", lambda e: self.text.config(cursor="hand2"))
-        self.text.tag_bind("spell_link", "<Leave>", lambda e: self.text.config(cursor=""))
+        self.text.tag_bind("spell_link", "<Enter>", lambda e: [self.text.config(cursor="hand2"), self._on_link_enter(e)])
+        self.text.tag_bind("spell_link", "<Leave>", lambda e: [self.text.config(cursor=""), self._on_link_leave(e)])
+        self.text.tag_bind("spell_link", "<Motion>", self._on_link_motion)
         self.text.tag_bind("spell_link", "<Button-1>", self._on_spell_click)
+
+    def _on_link_enter(self, event):
+        self._handle_link_hover(event)
+
+    def _on_link_motion(self, event):
+        self._handle_link_hover(event)
+
+    def _on_link_leave(self, event):
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+            self._hover_popup = None
+            self._hover_target = None
+
+    def _handle_link_hover(self, event):
+        idx = self.text.index(f"@{event.x},{event.y}")
+        tags = self.text.tag_names(idx)
+        target_tag = None
+        valid_prefixes = ["SPELL_TAG:", "CONDITION_TAG:", "LOC_MON_TAG:", "LOC_NPC_TAG:", "LOC_COMBAT_TAG:", "LOC_EVT_TAG:", "LOC_OBJ_TAG:", "LOC_CONN_TAG:"]
+        for t in tags:
+            if ":" in t and any(t.startswith(p) for p in valid_prefixes):
+                target_tag = t
+                break
+        if not target_tag:
+            self._on_link_leave(None)
+            return
+
+        h_popup = 450
+        app_height = self.winfo_toplevel().winfo_height()
+        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
+        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+
+        if hasattr(self, "_hover_target") and self._hover_target == target_tag:
+            if hasattr(self, "_hover_popup") and self._hover_popup:
+                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+            return
+
+        self._on_link_leave(None)
+        self._hover_target = target_tag
+        prefix, name = target_tag.split(":", 1)
+        
+        popup = tk.Toplevel(self)
+        popup.is_hover_popup = True  # Unlocks scrollwheel mapping routing rules
+        popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
+        popup.geometry(f"550x{h_popup}+{event.x_root + 15}+{y_pos}")
+        self._hover_popup = popup
+
+        if prefix == "CONDITION_TAG":
+            from stat_renderer import CONDITIONS_DB
+            desc = CONDITIONS_DB.get(name.lower().strip(), "No description available.")
+            txt = tk.Text(popup, font=("Times", 12), wrap=tk.WORD, bg="#fdf1dc", bd=0, highlightthickness=0)
+            txt.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+            txt.insert("1.0", name.title(), "title")
+            txt.tag_configure("title", font=("Georgia", 14, "bold"), foreground="#58180d")
+            txt.insert(tk.END, f"\n\n{desc}")
+            txt.config(state=tk.DISABLED)
+            # ADD THIS LINE RIGHT HERE:
+            popup.target_text_widget = txt
+        else:
+            toplevel = self.winfo_toplevel()
+            if hasattr(toplevel, "resolve_hover_data"):
+                data, dtype = toplevel.resolve_hover_data(prefix, name)
+                if data:
+                    mini_viewer = StatBlockRenderer(popup)
+                    mini_viewer.pack(fill=tk.BOTH, expand=True)
+                    mini_viewer.clear_overlays()
+                    mini_viewer.text.adjust_height = lambda: None
+                    mini_viewer.text.configure(height=1)
+                    if dtype == "spell": mini_viewer.render_spell(data)
+                    elif dtype in ["monster", "npc"]: mini_viewer.render_monster(data)
+                    elif dtype == "location": mini_viewer.render_location(data)
+                    elif dtype == "event": mini_viewer.render_event(data)
+                    elif dtype == "object": mini_viewer.render_object(data)
+                    # ADD THIS LINE RIGHT HERE:
+                    popup.target_text_widget = mini_viewer.text
+                else:
+                    tk.Label(popup, text=f"Profile '{name}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
 
     def _optimize_and_refresh_layout(self):
         """Performs a single optimized batch layout pass for all text fields and scrollable frames."""
-        AutoHeightText.suspended = False
-        
-        # 1. Allow Tkinter to map and calculate all true widget dimensions simultaneously
         self.edit_inner.update_idletasks()
         
-        # 2. Recursively find and trigger a single calculation pass for all text boxes
         def process_widget(w):
             if isinstance(w, AutoHeightText):
                 w.adjust_height()
@@ -169,8 +302,6 @@ class StatBlockRenderer(tk.Frame):
                 process_widget(child)
                 
         process_widget(self.edit_inner)
-        
-        # 3. Finalize the canvas viewport bounds exactly once
         self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
     def insert_divider(self):
@@ -220,7 +351,7 @@ class StatBlockRenderer(tk.Frame):
             tk.Label(basic_frame, text=label_text, bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=row, column=0, sticky="e", padx=5, pady=2)
             val = self.edit_data.get(key, "")
             if isinstance(val, (dict, list)): val = json.dumps(val)
-            entry = tk.Entry(basic_frame, width=width, font=self.body_font)
+            entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=width, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
             entry.insert(0, str(val)); entry.grid(row=row, column=1, sticky="w", padx=5, pady=2)
             self.edit_refs[key] = entry; row += 1
 
@@ -230,12 +361,12 @@ class StatBlockRenderer(tk.Frame):
         if isinstance(ac_val, list) and len(ac_val) > 0: ac_val = ac_val[0]
         if isinstance(ac_val, dict): ac_val = ac_val.get("ac", 10)
         tk.Label(basic_frame, text="Armor Class:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=row, column=0, sticky="e", padx=5, pady=2)
-        ac_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
+        ac_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
         ac_entry.insert(0, str(ac_val)); ac_entry.grid(row=row, column=1, sticky="w", padx=5, pady=2); self.edit_refs["ac"] = ac_entry; row += 1
 
         hp_formula = self.edit_data.get("hp", {}).get("formula", "1d8")
         tk.Label(basic_frame, text="Hit Points (Formula):", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=row, column=0, sticky="e", padx=5, pady=2)
-        hp_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
+        hp_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
         hp_entry.insert(0, str(hp_formula)); hp_entry.grid(row=row, column=1, sticky="w", padx=5, pady=2); self.edit_refs["hp_formula"] = hp_entry; row += 1
 
         ui_frame = tk.Frame(self.edit_inner, bg="#fdf1dc"); ui_frame.pack(fill=tk.X, pady=5)
@@ -267,9 +398,11 @@ class StatBlockRenderer(tk.Frame):
         def add_speed_row(s_type="walk", s_val="", s_cond=""):
             row = tk.Frame(self.speed_frame, bg="#fdf1dc"); row.pack(fill=tk.X, pady=2)
             t_var = tk.StringVar(value=s_type); ttk.Combobox(row, textvariable=t_var, values=["walk", "fly", "swim", "climb", "burrow"], width=8, state="readonly").pack(side=tk.LEFT, padx=2)
-            v_en = tk.Entry(row, width=5); v_en.insert(0, str(s_val)); v_en.pack(side=tk.LEFT, padx=2)
+            v_en = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, width=5, font=self.body_font, bd=1, relief=tk.SOLID)
+            v_en.insert(0, str(s_val)); v_en.pack(side=tk.LEFT, padx=2)
             tk.Label(row, text="ft.", bg="#fdf1dc", fg="black").pack(side=tk.LEFT)
-            c_en = tk.Entry(row, width=15); c_en.insert(0, str(s_cond)); c_en.pack(side=tk.LEFT, padx=2)
+            c_en = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, width=15, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            c_en.insert(0, str(s_cond)); c_en.pack(side=tk.LEFT, padx=2)
             def remove():
                 row.pack_forget(); row.destroy(); self.speed_refs.remove((t_var, v_en, c_en, row))
             tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=remove).pack(side=tk.LEFT, padx=5)
@@ -292,9 +425,9 @@ class StatBlockRenderer(tk.Frame):
         self.edit_ability_refs = {}
         for i, stat in enumerate(["str", "dex", "con", "int", "wis", "cha"]):
             tk.Label(abilities_frame, text=stat.upper(), bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=i+1, padx=5)
-            v_en = tk.Entry(abilities_frame, width=6, justify="center", font=self.body_font); v_en.insert(0, str(self.edit_data.get(stat, 10))); v_en.grid(row=1, column=i+1, padx=5, pady=2)
-            m_en = tk.Entry(abilities_frame, width=6, justify="center", font=self.body_font); m_en.insert(0, str(self.edit_data.get("modOverride", {}).get(stat, ""))); m_en.grid(row=2, column=i+1, padx=5, pady=2)
-            s_en = tk.Entry(abilities_frame, width=6, justify="center", font=self.body_font); s_en.insert(0, str(self.edit_data.get("save", {}).get(stat, ""))); s_en.grid(row=3, column=i+1, padx=5, pady=2)
+            v_en = AutoHeightText(abilities_frame, canvas_to_refresh=self.edit_canvas, width=6, font=self.body_font, bd=1, relief=tk.SOLID); v_en.insert(0, str(self.edit_data.get(stat, 10))); v_en.grid(row=1, column=i+1, padx=5, pady=2)
+            m_en = AutoHeightText(abilities_frame, canvas_to_refresh=self.edit_canvas, width=6, font=self.body_font, bd=1, relief=tk.SOLID); m_en.insert(0, str(self.edit_data.get("modOverride", {}).get(stat, ""))); m_en.grid(row=2, column=i+1, padx=5, pady=2)
+            s_en = AutoHeightText(abilities_frame, canvas_to_refresh=self.edit_canvas, width=6, font=self.body_font, bd=1, relief=tk.SOLID); s_en.insert(0, str(self.edit_data.get("save", {}).get(stat, ""))); s_en.grid(row=3, column=i+1, padx=5, pady=2)
             self.edit_ability_refs[stat] = (v_en, m_en, s_en)
 
         self.arrays_frame = tk.Frame(self.edit_inner, bg="#fdf1dc"); self.arrays_frame.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -321,12 +454,13 @@ class StatBlockRenderer(tk.Frame):
             for obj in self.edit_data.get("objects", []): draw_obj_row_creature(obj)
 
         def sync_all_sc():
-            for sc_dict_ref, hdr_text, ab_var, dc_var, hit_var, slots_entries in self.sc_refs:
+            for sc_dict_ref, _, ab_var, dc_var, hit_var, slots_entries in self.sc_refs:
                 try:
-                    sc_dict_ref["headerEntries"] = [hdr_text.get("1.0", "end-1c").strip()]
-                    sc_dict_ref["ability"] = ab_var.get().lower()
-                    dc_val = dc_var.get().strip(); sc_dict_ref["custom_dc"] = int(dc_val) if dc_val.isdigit() else 10
-                    hit_val = hit_var.get().strip(); sc_dict_ref["custom_hit"] = int(hit_val) if hit_val.lstrip('+-').isdigit() else 2
+                    sc_dict_ref["ability"] = ab_var.get().lower() if ab_var else "int"
+                    dc_val = dc_var.get().strip() if dc_var else "10"
+                    sc_dict_ref["custom_dc"] = int(dc_val) if dc_val.isdigit() else 10
+                    hit_val = hit_var.get().strip() if hit_var else "2"
+                    sc_dict_ref["custom_hit"] = int(hit_val) if hit_val.lstrip('+-').isdigit() else 2
                     if "spells" in sc_dict_ref:
                         for lvl, se in slots_entries.items():
                             val = se.get().strip()
@@ -334,7 +468,6 @@ class StatBlockRenderer(tk.Frame):
                 except Exception: pass
 
         def rebuild_all_sc():
-            AutoHeightText.suspended = True  # Turn on the performance safety lock
             sync_all_sc()
             self.sc_refs.clear()
             for hook in self.rebuild_sc_hooks: hook()
@@ -356,13 +489,16 @@ class StatBlockRenderer(tk.Frame):
             t = tk.Frame(f, bg="#e2f0d9", pady=2); t.pack(fill=tk.X)
             
             tk.Label(t, text="Name:", bg="#e2f0d9", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=2)
-            ne = tk.Entry(t, width=22, font=self.body_font); ne.insert(0, d.get("name", f"Dialogue with {self.edit_refs['name'].get()}")); ne.pack(side=tk.LEFT, padx=4)
+            ne = AutoHeightText(t, canvas_to_refresh=self.edit_canvas, width=22, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            ne.insert(0, d.get("name", f"Dialogue with {self.edit_refs['name'].get()}")); ne.pack(side=tk.LEFT, padx=4)
             
             tk.Label(t, text="Location:", bg="#e2f0d9", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=2)
-            le = tk.Entry(t, width=15, font=self.body_font); le.insert(0, d.get("location", def_loc)); le.pack(side=tk.LEFT, padx=4)
+            le = AutoHeightText(t, canvas_to_refresh=self.edit_canvas, width=15, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            le.insert(0, d.get("location", def_loc)); le.pack(side=tk.LEFT, padx=4)
             
             tk.Label(t, text="Event:", bg="#e2f0d9", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=2)
-            te = tk.Entry(t, width=15, font=self.body_font); te.insert(0, d.get("time", "Act 1")); te.pack(side=tk.LEFT, padx=4)
+            te = AutoHeightText(t, canvas_to_refresh=self.edit_canvas, width=15, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            te.insert(0, d.get("time", "Act 1")); te.pack(side=tk.LEFT, padx=4)
             
             tk.Label(f, text="Description:", bg="#e2f0d9", font=self.body_italic, fg="black").pack(anchor="w", pady=(5,0))
             txt = AutoHeightText(f, canvas_to_refresh=self.edit_canvas, height=1, font=self.body_font, wrap=tk.WORD); txt.insert("1.0", "\n".join(d.get("entries", []))); txt.pack(fill=tk.X)
@@ -397,7 +533,6 @@ class StatBlockRenderer(tk.Frame):
                 self.insert_divider()
                 for item in items:
                     name = item if isinstance(item, str) else item.get("name", "")
-                    # FIXED: Changed self.text.text.insert to self.text.insert
                     self.text.insert(tk.END, "• ")
                     self.text.insert(tk.END, name, ("spell_link", f"{tag_prefix}:{name}"))
                     self.text.insert(tk.END, "\n", "body")
@@ -405,7 +540,7 @@ class StatBlockRenderer(tk.Frame):
 
         connections = data.get("connections", [])
         if connections:
-            is_loc = any("location" in p[1].lower() for p in sections)
+            is_loc = any("events" in p[0].lower() for p in sections)
             self.text.insert(tk.END, f"Connected {'locations' if is_loc else 'events'}\n", "section_header")
             self.insert_divider()
             for conn in connections:
@@ -414,7 +549,7 @@ class StatBlockRenderer(tk.Frame):
                 self.text.insert(tk.END, "• ")
                 self.text.insert(tk.END, target, ("spell_link", f"{'LOC_CONN_TAG' if is_loc else 'LOC_EVT_TAG'}:{target}"))
                 if c_desc: 
-                    self.text.insert(tk.END, f" — {c_desc}", "body")
+                    self.text.insert(tk.END, f" : {c_desc}", "body")
                 self.text.insert(tk.END, "\n", "body")
             self.text.insert(tk.END, "\n")
             
@@ -441,6 +576,15 @@ class StatBlockRenderer(tk.Frame):
         storage = {k: [] for k in keys}
         def handle_save():
             self.edit_data["name"] = name_entry.get().strip(); self.edit_data["description"] = desc_text.get("1.0", "end-1c").strip()
+            
+            if is_location:
+                try:
+                    d_str = depths_entry.get().strip()
+                    d_list = [int(x.strip()) for x in d_str.split(",") if x.strip().replace('-', '', 1).isdigit()]
+                    self.edit_data["depths"] = d_list if d_list else [0]
+                except:
+                    self.edit_data["depths"] = [0]
+            
             for k in keys[:-1]: self.edit_data[k] = [m["name"] for m in storage[k]]
             self.edit_data["connections"] = [{"target": c["target"], "description": c["desc_entry"].get().strip()} for c in storage["connections"]]
             save_callback(callbacks_dict["dir"], self.edit_data)
@@ -450,11 +594,19 @@ class StatBlockRenderer(tk.Frame):
 
         basic_frame = tk.Frame(self.edit_inner, bg="#fdf1dc"); basic_frame.pack(fill=tk.X, pady=10)
         tk.Label(basic_frame, text="Name:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=0, sticky="e", padx=5, pady=2)
-        name_entry = tk.Entry(basic_frame, width=50, font=self.body_font); name_entry.insert(0, self.edit_data.get("name", callbacks_dict["dir"].name)); name_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        name_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        name_entry.insert(0, self.edit_data.get("name", callbacks_dict["dir"].name)); name_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
 
         tk.Label(basic_frame, text="Description:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=1, column=0, sticky="ne", padx=5, pady=2)
-        desc_text = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=60, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        desc_text = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
         desc_text.insert("1.0", self.edit_data.get("description", "")); desc_text.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        if is_location:
+            tk.Label(basic_frame, text="Depths (comma-separated):", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=2, column=0, sticky="e", padx=5, pady=2)
+            depths_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            cur_depths = self.edit_data.get("depths", [0])
+            depths_entry.insert(0, ", ".join(map(str, cur_depths)))
+            depths_entry.grid(row=2, column=1, sticky="w", padx=5, pady=2)
 
         def make_section(title_text):
             sec_frame = tk.Frame(self.edit_inner, bg="#fdf1dc", pady=5); sec_frame.pack(fill=tk.X)
@@ -472,23 +624,20 @@ class StatBlockRenderer(tk.Frame):
         def draw_connection_row(list_frame, target, description=""):
             row = tk.Frame(list_frame, bg="#f5e6ce", pady=6, padx=10, bd=1, relief=tk.SOLID); row.pack(fill=tk.X, pady=2)
             tk.Label(row, text=f"Route To: {target}", font=self.body_bold, bg="#f5e6ce", fg="black").pack(side=tk.LEFT, padx=5)
-            desc_en = tk.Entry(row, width=35, font=self.body_font); desc_en.insert(0, description); desc_en.pack(side=tk.LEFT, padx=5)
+            desc_en = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, width=35, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            desc_en.insert(0, description); desc_en.pack(side=tk.LEFT, padx=5)
             item_dict = {"target": target, "desc_entry": desc_en, "frame": row}; storage["connections"].append(item_dict)
             tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.pack_forget(), row.destroy(), storage["connections"].remove(item_dict), self.edit_inner.update_idletasks(), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
             self.edit_inner.update_idletasks(); self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
-        # Monsters
         m_hdr, m_lst = make_section("Monsters:"); m_lst.pack(fill=tk.X)
         tk.Button(m_hdr, text="+ New", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: callbacks_dict["new_mon"](lambda n: draw_simple_row(m_lst, n, storage["monsters"]))).pack(side=tk.LEFT, padx=5)
         tk.Button(m_hdr, text="+ Existing", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: callbacks_dict["exist_mon"](lambda n: draw_simple_row(m_lst, n, storage["monsters"]))).pack(side=tk.LEFT, padx=2)
         for m in self.edit_data["monsters"]: draw_simple_row(m_lst, m, storage["monsters"])
 
-        # NPCs, Combats, Objects
         for k, label, cb_key in [("npcs", "NPCs:", "exist_npc"), ("combats", "Combats:", "exist_combat"), ("objects", "Objects:", "exist_obj")]:
             hdr, lst = make_section(label)
             lst.pack(fill=tk.X)
-            
-            # FIXED: Bound loop variables using default arguments to prevent closure override bugs
             tk.Button(
                 hdr, 
                 text=f"+ Add {label[:-1]}", 
@@ -496,17 +645,14 @@ class StatBlockRenderer(tk.Frame):
                 font=("Arial", 8, "bold"), 
                 command=lambda ck=cb_key, l=lst, key=k: callbacks_dict[ck](lambda n: draw_simple_row(l, n, storage[key]))
             ).pack(side=tk.LEFT, padx=5)
-            
             for item in self.edit_data[k]: 
                 draw_simple_row(lst, item, storage[k])
 
-        # Linked Branch
         alt_key = "events" if is_location else "locations"
         hdr, lst = make_section("Related Events:" if is_location else "Locations:"); lst.pack(fill=tk.X)
         tk.Button(hdr, text=f"+ Add {'Event' if is_location else 'Location'}", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: callbacks_dict["exist_alt"](lambda n: draw_simple_row(lst, n, storage[alt_key]))).pack(side=tk.LEFT, padx=5)
         for alt in self.edit_data[alt_key]: draw_simple_row(lst, alt, storage[alt_key])
 
-        # Border Routes
         conn_hdr, conn_lst = make_section("Connected Map Locations:" if is_location else "Connected Events:"); conn_lst.pack(fill=tk.X)
         tk.Button(conn_hdr, text="+ Add Connection", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: callbacks_dict["add_conn"](lambda target: draw_connection_row(conn_lst, target))).pack(side=tk.LEFT, padx=5)
         for conn in self.edit_data["connections"]: draw_connection_row(conn_lst, conn.get("target", ""), conn.get("description", ""))
@@ -519,7 +665,6 @@ class StatBlockRenderer(tk.Frame):
     def render_event_edit_mode(self, data, event_dir, save_callback, cancel_callback, add_new_monster_cb, add_existing_monster_cb, add_existing_npc_cb, add_existing_combat_cb, add_existing_location_cb, add_existing_object_cb, add_connection_cb):
         self._render_campaign_node_edit(data, False, save_callback, cancel_callback, {"dir": event_dir, "new_mon": add_new_monster_cb, "exist_mon": add_existing_monster_cb, "exist_npc": add_existing_npc_cb, "exist_combat": add_existing_combat_cb, "exist_alt": add_existing_location_cb, "exist_obj": add_existing_object_cb, "add_conn": add_connection_cb})
 
-    
     def build_array_section(self, key, title, rebuild_all_sc, sync_all_sc):
         import utils
         sec_frame = tk.Frame(self.arrays_frame, bg="#fdf1dc", pady=10)
@@ -531,26 +676,6 @@ class StatBlockRenderer(tk.Frame):
         btn_frame = tk.Frame(header_frame, bg="#fdf1dc")
         btn_frame.pack(side=tk.LEFT, padx=15)
         tk.Button(btn_frame, text="+ Add Field", bg="#d9ad6c", font=("Arial", 10, "bold"), command=lambda: add_item()).pack(side=tk.LEFT, padx=5)
-
-        # FIXED: Changed txt_widget.update() to update_idletasks() to completely fix layout lag
-        def update_text_height(txt_widget):
-            txt_widget.update_idletasks()
-            try:
-                last_idx = txt_widget.index("end-1c")
-                bbox_last = txt_widget.bbox(last_idx)
-                bbox_first = txt_widget.bbox("1.0")
-                if bbox_last and bbox_first:
-                    content_pixel_height = bbox_last[1] + bbox_last[3]
-                    line_font_height = bbox_first[3]
-                    needed_lines = int((content_pixel_height + line_font_height - 1) // line_font_height) + 1
-                    line_count = int(txt_widget.count("1.0", "end-1c", "displaylines")[0])
-                    txt_widget.config(height=max(2, max(line_count, needed_lines)))
-                else:
-                    num_chips = len(txt_widget.window_names())
-                    estimated_rows = max(1, (num_chips + 2) // 3)
-                    txt_widget.config(height=max(2, estimated_rows * 2))
-            except:
-                txt_widget.config(height=2)
 
         sc_type = "slots" if key == "trait" else ("innate" if key == "action" else None)
         sc_container = tk.Frame(sec_frame, bg="#fdf1dc")
@@ -568,12 +693,6 @@ class StatBlockRenderer(tk.Frame):
                     if isinstance(row, tk.Frame) and row.winfo_children():
                         row.pack_forget()
                         row.destroy()
-
-                # NEW: prune entries whose hdr_text widget is now destroyed
-                self.sc_refs = [
-                    entry for entry in self.sc_refs
-                    if entry[1].winfo_exists()
-                ]
 
                 sc_data = self.edit_data.get("spellcasting", [])
                 has_matching = False
@@ -598,7 +717,7 @@ class StatBlockRenderer(tk.Frame):
                     def make_remover(idx=i, target_block=block):
                         sync_all_sc()
                         self.edit_data["spellcasting"].pop(idx)
-                        target_block.pack_forget() # Force early geometry reflow
+                        target_block.pack_forget() 
                         rebuild_all_sc()
                     tk.Button(top, text="X Remove Block", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=make_remover).pack(side=tk.RIGHT)
                     
@@ -611,14 +730,16 @@ class StatBlockRenderer(tk.Frame):
                         ttk.Combobox(param_row, textvariable=ab_var, values=["Int", "Wis", "Cha", "Str", "Dex", "Con"], state="readonly", width=5).pack(side=tk.LEFT, padx=(2, 10))
 
                         tk.Label(param_row, text="Save DC:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
-                        dc_var = tk.StringVar(value=str(sc_dict.get("custom_dc", 10)))
-                        tk.Entry(param_row, textvariable=dc_var, width=4).pack(side=tk.LEFT, padx=(2, 10))
+                        dc_en = AutoHeightText(param_row, canvas_to_refresh=self.edit_canvas, width=4, font=self.body_font, bd=1, relief=tk.SOLID)
+                        dc_en.insert(0, str(sc_dict.get("custom_dc", 10)))
+                        dc_en.pack(side=tk.LEFT, padx=(2, 10))
 
                         tk.Label(param_row, text="To Hit:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
-                        hit_var = tk.StringVar(value=str(sc_dict.get("custom_hit", 2)))
-                        tk.Entry(param_row, textvariable=hit_var, width=4).pack(side=tk.LEFT, padx=(2, 10))
+                        hit_en = AutoHeightText(param_row, canvas_to_refresh=self.edit_canvas, width=4, font=self.body_font, bd=1, relief=tk.SOLID)
+                        hit_en.insert(0, str(sc_dict.get("custom_hit", 2)))
+                        hit_en.pack(side=tk.LEFT, padx=(2, 10))
                     else:
-                        ab_var, dc_var, hit_var = None, None, None
+                        ab_var, dc_en, hit_en = None, None, None
 
                     lbl_title = "Description:" if is_obj else "Header Template:"
                     tk.Label(block, text=lbl_title, bg="#f5e6ce", font=self.body_italic, fg="black").pack(anchor="w")
@@ -646,17 +767,17 @@ class StatBlockRenderer(tk.Frame):
                                 
                                 if lvl > 0 and not is_obj:
                                     tk.Label(row, text="Slots:", bg="#f5e6ce", fg="black").pack(side=tk.LEFT, padx=2, anchor="n")
-                                    se = tk.Entry(row, width=3)
+                                    se = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, width=3, font=self.body_font, bd=1, relief=tk.SOLID)
                                     se.insert(0, str(lvl_data.get("slots", 0)))
                                     se.pack(side=tk.LEFT, padx=(0,10), anchor="n")
                                     slots_entries[lvl_str] = se
                                 
-                                txt_wrap = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, bg="#f5e6ce", font=("Arial", 14), bd=0, highlightthickness=0, wrap=tk.WORD, height=1)
+                                txt_wrap = ChipFlowFrame(row, bg="#f5e6ce", height=30)
                                 txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor="n")
                                 
                                 for s_idx, s_name in enumerate(spells_list):
                                     sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
-                                    tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                    tk.Label(sf, text=utils.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
                                     
                                     def make_slots_remover(l=lvl_str, idx=s_idx, target_sc=sc_dict):
                                         sync_all_sc()
@@ -669,28 +790,30 @@ class StatBlockRenderer(tk.Frame):
                                         rebuild_local_sc()
 
                                     tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), command=make_slots_remover).pack(side=tk.LEFT, padx=(4,0))
-                                    txt_wrap.window_create(tk.END, window=sf)
-                                    txt_wrap.insert(tk.END, "  ")
-
-                                update_text_height(txt_wrap)
-                                txt_wrap.config(state=tk.DISABLED)
+                                    txt_wrap.add_widget(sf)
                     else:
                         if "will" in sc_dict and sc_dict["will"]:
                             row = tk.Frame(spells_frame, bg="#f5e6ce", pady=4)
                             row.pack(fill=tk.X)
                             
                             tk.Label(row, text="At will:", font=self.body_bold, bg="#f5e6ce", fg="black", width=8, anchor="w").pack(side=tk.LEFT, anchor="n")
-                            txt_wrap = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, bg="#f5e6ce", font=("Arial", 14), bd=0, highlightthickness=0, wrap=tk.WORD, height=1)
+                            txt_wrap = ChipFlowFrame(row, bg="#f5e6ce", height=30)
                             txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor="n")
                             
                             for s_idx, s_name in enumerate(sc_dict["will"]):
                                 sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
-                                tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
-                                tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), command=lambda idx=s_idx: (sync_all_sc(), sc_dict["will"].pop(idx), rebuild_all_sc())).pack(side=tk.LEFT, padx=(4,0))
-                                txt_wrap.window_create(tk.END, window=sf); txt_wrap.insert(tk.END, "  ")
-                            update_text_height(txt_wrap)
-                            txt_wrap.config(state=tk.DISABLED)
+                                tk.Label(sf, text=utils.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                
+                                def make_will_remover(idx=s_idx, target_sc=sc_dict):
+                                    sync_all_sc()
+                                    if "will" in target_sc and idx < len(target_sc["will"]):
+                                        target_sc["will"].pop(idx)
+                                        if not target_sc["will"]:
+                                            target_sc.pop("will", None)
+                                    rebuild_all_sc()
 
+                                tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), command=make_will_remover).pack(side=tk.LEFT, padx=(4,0))
+                                txt_wrap.add_widget(sf)
                         if "daily" in sc_dict and sc_dict["daily"]:
                             for freq in list(sc_dict["daily"].keys()):
                                 if sc_dict["daily"][freq]:
@@ -698,11 +821,11 @@ class StatBlockRenderer(tk.Frame):
                                     row = tk.Frame(spells_frame, bg="#f5e6ce", pady=8)
                                     row.pack(fill=tk.X)
                                     tk.Label(row, text=f"{freq}/day:", font=self.body_bold, bg="#f5e6ce", fg="black", width=8, anchor="w").pack(side=tk.LEFT, anchor="n")
-                                    txt_wrap = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, bg="#f5e6ce", font=("Arial", 14), bd=0, highlightthickness=0, wrap=tk.WORD, height=1)
+                                    txt_wrap = ChipFlowFrame(row, bg="#f5e6ce", height=30)
                                     txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor="n")
                                     for s_idx, s_name in enumerate(spells_list):
                                         sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
-                                        tk.Label(sf, text=utils.clean_5etools_text(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                        tk.Label(sf, text=utils.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
                                         
                                         def make_daily_remover(f=freq, index=s_idx, target_sc=sc_dict):
                                             sync_all_sc()
@@ -715,9 +838,7 @@ class StatBlockRenderer(tk.Frame):
                                             rebuild_local_sc()
                                             
                                         tk.Button(sf, text="x", bg="#ff4d4d", fg="white", font=("Arial", 8), padx=2, command=make_daily_remover).pack(side=tk.LEFT, padx=(4,0))
-                                        txt_wrap.window_create(tk.END, window=sf); txt_wrap.insert(tk.END, "  ")
-                                    update_text_height(txt_wrap)
-                                    txt_wrap.config(state=tk.DISABLED)
+                                        txt_wrap.add_widget(sf)
 
                     def add_spell_to_block(block_ref=sc_dict, innate_flag=is_innate_block):
                         def on_spell_selected(spell_data, freq=None):
@@ -739,14 +860,9 @@ class StatBlockRenderer(tk.Frame):
                         SpellSearchDialog(self, self.spells_index, innate_flag, on_spell_selected)
 
                     tk.Button(block, text="+ Add Spell", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=add_spell_to_block).pack(pady=5)
-                    self.sc_refs.append((sc_dict, hdr_text, ab_var, dc_var, hit_var, slots_entries))
+                    self.sc_refs.append((sc_dict, hdr_text, ab_var, dc_en, hit_en, slots_entries))
                 
-                if not is_obj: 
-                    btn_add_sc.config(state=tk.DISABLED if has_matching else tk.NORMAL)
-                
-                # FIXED: Swapped to update_idletasks() to completely fix layout lag
-                #self.edit_inner.update_idletasks()
-                #self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+                btn_add_sc.config(state=tk.DISABLED if has_matching else tk.NORMAL)
 
             self.rebuild_sc_hooks.append(rebuild_local_sc)
 
@@ -786,7 +902,7 @@ class StatBlockRenderer(tk.Frame):
             top.pack(fill=tk.X)
             
             tk.Label(top, text="Name:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT)
-            name_entry = tk.Entry(top, width=30, font=self.body_font)
+            name_entry = AutoHeightText(top, canvas_to_refresh=self.edit_canvas, width=30, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
             name_entry.insert(0, name)
             name_entry.pack(side=tk.LEFT, padx=5)
 
@@ -833,10 +949,10 @@ class StatBlockRenderer(tk.Frame):
             atk_cb.pack(side=tk.LEFT, padx=5)
             
             def remove_item():
-                item_frame.pack_forget() # FIXED: Force immediate packer reflow before destruction to drop space constraints
+                item_frame.pack_forget() 
                 item_frame.destroy()
                 self.array_refs[key].remove((name_entry, atk_var, desc_text, hit_en, reach_en, dmg_form_en, dmg_type_en))
-                self.edit_inner.update_idletasks() # FIXED: Changed update() to update_idletasks()
+                self.edit_inner.update_idletasks() 
                 self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
                 
             tk.Button(top, text="X Remove", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=remove_item).pack(side=tk.RIGHT)
@@ -845,22 +961,22 @@ class StatBlockRenderer(tk.Frame):
             atk_params_frame.pack(fill=tk.X, pady=2)
             
             tk.Label(atk_params_frame, text="Hit Mod:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
-            hit_en = tk.Entry(atk_params_frame, width=5)
+            hit_en = AutoHeightText(atk_params_frame, canvas_to_refresh=self.edit_canvas, width=5, font=self.body_font, bd=1, relief=tk.SOLID)
             hit_en.insert(0, hit_val)
             hit_en.pack(side=tk.LEFT, padx=(2, 10))
             
             tk.Label(atk_params_frame, text="Reach:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
-            reach_en = tk.Entry(atk_params_frame, width=8)
+            reach_en = AutoHeightText(atk_params_frame, canvas_to_refresh=self.edit_canvas, width=8, font=self.body_font, bd=1, relief=tk.SOLID)
             reach_en.insert(0, reach_val)
             reach_en.pack(side=tk.LEFT, padx=(2, 10))
             
             tk.Label(atk_params_frame, text="Dmg Formula:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
-            dmg_form_en = tk.Entry(atk_params_frame, width=8)
+            dmg_form_en = AutoHeightText(atk_params_frame, canvas_to_refresh=self.edit_canvas, width=8, font=self.body_font, bd=1, relief=tk.SOLID)
             dmg_form_en.insert(0, dmg_form_val)
             dmg_form_en.pack(side=tk.LEFT, padx=(2, 10))
             
             tk.Label(atk_params_frame, text="Dmg Type:", bg="#f5e6ce", font=self.body_italic, fg="black").pack(side=tk.LEFT)
-            dmg_type_en = tk.Entry(atk_params_frame, width=12)
+            dmg_type_en = AutoHeightText(atk_params_frame, canvas_to_refresh=self.edit_canvas, width=12, font=self.body_font, bd=1, relief=tk.SOLID)
             dmg_type_en.insert(0, dmg_type_val)
             dmg_type_en.pack(side=tk.LEFT, padx=(2, 10))
 
@@ -913,10 +1029,9 @@ class StatBlockRenderer(tk.Frame):
         for sc, h_t, ab_v, dc_v, ht_v, sl in self.sc_refs:
             sc["headerEntries"] = [h_t.get("1.0", "end-1c").strip()]
             if not getattr(self, 'is_object_mode', False):
-                sc["ability"] = ab_v.get().lower()
-                sc["custom_dc"] = int(dc_v.get()) if dc_v.get().isdigit() else 10
-                sc["custom_hit"] = int(ht_v.get()) if ht_v.get().lstrip('+-').isdigit() else 2
-                # FIX: Preserve layout formatting tags explicitly if absent
+                sc["ability"] = ab_v.get().lower() if ab_v else "int"
+                sc["custom_dc"] = int(dc_v.get()) if dc_v and dc_v.get().isdigit() else 10
+                sc["custom_hit"] = int(ht_v.get()) if ht_v and ht_v.get().lstrip('+-').isdigit() else 2
                 if "displayAs" not in sc:
                     sc["displayAs"] = "innate" if "innate" in sc.get("name", "").lower() else "trait"
             if "spells" in sc:
@@ -954,19 +1069,11 @@ class StatBlockRenderer(tk.Frame):
 
     def insert_text_with_links(self, text, base_tags):
         base_tags = (base_tags,) if isinstance(base_tags, str) else base_tags
-        
-        # Comprehensive layout pattern capturing all available cross-reference tags
-        pattern = r'(«(?:SPELL|MONSTER|NPC|COMBAT|EVENT|OBJECT|LOCATION):[^»]+»)'
-        
-        # Direct structural dictionary mapping token prefixes to stat_viewer routing tags
+        pattern = r'(«(?:SPELL|MONSTER|NPC|COMBAT|EVENT|OBJECT|LOCATION|CONDITION):[^»]+»)'
         tag_map = {
-            "SPELL": "SPELL_TAG",
-            "MONSTER": "LOC_MON_TAG",
-            "NPC": "LOC_NPC_TAG",
-            "COMBAT": "LOC_COMBAT_TAG",
-            "EVENT": "LOC_EVT_TAG",
-            "OBJECT": "LOC_OBJ_TAG",
-            "LOCATION": "LOC_CONN_TAG"
+            "SPELL": "SPELL_TAG", "MONSTER": "LOC_MON_TAG", "NPC": "LOC_NPC_TAG",
+            "COMBAT": "LOC_COMBAT_TAG", "EVENT": "LOC_EVT_TAG", "OBJECT": "LOC_OBJ_TAG",
+            "LOCATION": "LOC_CONN_TAG", "CONDITION": "CONDITION_TAG"
         }
         
         for part in re.split(pattern, text):
@@ -975,7 +1082,6 @@ class StatBlockRenderer(tk.Frame):
                 if ":" in content:
                     t_type, t_val = content.split(":", 1)
                     prefix = tag_map.get(t_type.upper(), "SPELL_TAG")
-                    # Render using the uniform blue underlined styling with proper internal tracking prefixes
                     self.text.insert(tk.END, t_val, base_tags + ("spell_link", f"{prefix}:{t_val}"))
                 else:
                     self.text.insert(tk.END, content, base_tags)
@@ -983,12 +1089,11 @@ class StatBlockRenderer(tk.Frame):
                 self.text.insert(tk.END, part, base_tags)
 
     def extract_entries(self, entries):
-        import utils
         if not entries: return ""
-        if isinstance(entries, str): return utils.clean_5etools_text(entries) + "\n"
+        if isinstance(entries, str): return clean_5etools_text_with_conditions(entries) + "\n"
         out = ""
         for entry in entries:
-            if isinstance(entry, str): out += utils.clean_5etools_text(entry) + "\n"
+            if isinstance(entry, str): out += clean_5etools_text_with_conditions(entry) + "\n"
             elif isinstance(entry, dict):
                 if entry.get("type") == "list":
                     for item in entry.get("items", []): 
@@ -996,20 +1101,19 @@ class StatBlockRenderer(tk.Frame):
                 elif entry.get("type") == "item" or "entry" in entry:
                     item_str = ""
                     if "name" in entry:
-                        item_str += f"{utils.clean_5etools_text(entry['name'])}. "
+                        item_str += f"{clean_5etools_text_with_conditions(entry['name'])}. "
                     if "entry" in entry:
                         if isinstance(entry["entry"], str):
-                            item_str += utils.clean_5etools_text(entry["entry"])
+                            item_str += clean_5etools_text_with_conditions(entry["entry"])
                         elif isinstance(entry["entry"], list):
                             item_str += self.extract_entries(entry["entry"]).strip()
                     out += item_str + "\n"
                 elif "entries" in entry:
-                    if "name" in entry: out += f"{utils.clean_5etools_text(entry['name'])}. "
+                    if "name" in entry: out += f"{clean_5etools_text_with_conditions(entry['name'])}. "
                     out += self.extract_entries(entry["entries"])
         return out
 
     def build_ability_scores(self, data):
-        import utils
         grid = tk.Frame(self.text, bg="#fdf1dc", pady=10)
         stats = ["str", "dex", "con", "int", "wis", "cha"]
         tk.Label(grid, text="Value", font=self.body_italic, bg="#fdf1dc", fg="#555").grid(row=1, column=0, sticky="e", padx=(0, 10))
@@ -1036,7 +1140,6 @@ class StatBlockRenderer(tk.Frame):
         self.text.insert(tk.END, "\n")
 
     def _render_spellcasting(self, spellcasting_list, caster_level):
-        import utils
         if not spellcasting_list: return
         
         def get_ordinal(n):
@@ -1047,7 +1150,7 @@ class StatBlockRenderer(tk.Frame):
             except: return f"{n}-level"
 
         for sc in spellcasting_list:
-            name = utils.clean_5etools_text(sc.get("name", "Spellcasting"))
+            name = clean_5etools_text_with_conditions(sc.get("name", "Spellcasting"))
             self.text.insert(tk.END, f"{name}. ", "bold") 
             
             headers = sc.get("headerEntries", [])
@@ -1065,17 +1168,17 @@ class StatBlockRenderer(tk.Frame):
                 h = h.replace("{@custom_hit}", f"{{@hit {hit}}}")
                 formatted_headers.append(h)
                 
-            header_text = " ".join([utils.clean_5etools_text(h) for h in formatted_headers])
+            header_text = " ".join([clean_5etools_text_with_conditions(h) for h in formatted_headers])
             self.insert_text_with_links(f"{header_text}\n", "body")
             
             if "will" in sc:
-                spells = ", ".join([utils.clean_5etools_text(s) for s in sc["will"]])
+                spells = ", ".join([clean_5etools_text_with_conditions(s) for s in sc["will"]])
                 self.insert_text_with_links(f"• At will: {spells}\n", "body_indented")
             if "daily" in sc:
                 for freq, spells_list in sc["daily"].items():
                     freq_num = freq[0]
                     each = " each" if freq.endswith("e") else ""
-                    spells = ", ".join([utils.clean_5etools_text(s) for s in spells_list])
+                    spells = ", ".join([clean_5etools_text_with_conditions(s) for s in spells_list])
                     self.insert_text_with_links(f"• {freq_num}/day{each}: {spells}\n", "body_indented")
             if "spells" in sc:
                 levels = {"0": "Cantrips (at will)", "1": "1st level", "2": "2nd level", "3": "3rd level", "4": "4th level", "5": "5th level", "6": "6th level", "7": "7th level", "8": "8th level", "9": "9th level"}
@@ -1086,22 +1189,20 @@ class StatBlockRenderer(tk.Frame):
                         lvl_str = levels.get(str_level, f"{level} level")
                         slots = level_data.get("slots")
                         if slots: lvl_str += f" ({slots} slots)"
-                        spells = ", ".join([utils.clean_5etools_text(s) for s in level_data.get("spells", [])])
+                        spells = ", ".join([clean_5etools_text_with_conditions(s) for s in level_data.get("spells", [])])
                         self.insert_text_with_links(f"• {lvl_str}: {spells}\n", "body_indented")
             self.text.insert(tk.END, "\n")
 
     def _render_section(self, entries_list):
-        import utils
         if not entries_list: return
         for item in entries_list:
             name = item.get("name", "")
-            if name: self.text.insert(tk.END, f"{utils.clean_5etools_text(name)}. ", "bold")
+            if name: self.text.insert(tk.END, f"{clean_5etools_text_with_conditions(name)}. ", "bold")
             content = self.extract_entries(item.get("entries", []))
             self.insert_text_with_links(content, "body")
             self.text.insert(tk.END, "\n")
 
     def render_monster(self, data, back_cb=None):
-        import utils
         self.clear_overlays()
         self.edit_container.pack_forget()
         self.view_container.pack(fill=tk.BOTH, expand=True)
@@ -1136,7 +1237,7 @@ class StatBlockRenderer(tk.Frame):
         ac = data.get("ac", [10])[0]
         if isinstance(ac, dict):
             ac_val = str(ac.get("ac", ""))
-            if "from" in ac: ac_val += f" ({utils.clean_5etools_text(', '.join(ac['from']))})"
+            if "from" in ac: ac_val += f" ({clean_5etools_text_with_conditions(', '.join(ac['from']))})"
         else: ac_val = str(ac)
             
         self.text.insert(tk.END, "Armor Class: ", "bold")
@@ -1191,7 +1292,6 @@ class StatBlockRenderer(tk.Frame):
             self.text.insert(tk.END, "Languages: ", "bold")
             self.text.insert(tk.END, f"{utils.parse_complex_list(data['languages'])}\n", "body")
             
-        # MODIFIED: Conditionally display Level and CR (denoted as CR, skipping if empty)
         if "level" in data and data["level"] not in ["", None]:
             self.text.insert(tk.END, "Level: ", "bold")
             self.text.insert(tk.END, f"{data['level']}\n", "body")
@@ -1200,17 +1300,14 @@ class StatBlockRenderer(tk.Frame):
             self.text.insert(tk.END, "CR: ", "bold")
             self.text.insert(tk.END, f"{cr_val}\n", "body")
 
-        #self.insert_divider()
-
         global_level = data.get("level", 1)
         dialogues = data.get("dialogues", [])
 
-        # MODIFIED: Standard capitalized headers
         if dialogues:
             self.text.insert(tk.END, "Dialogues\n", "section_header")
             self.insert_divider()
             for d in dialogues:
-                self.text.insert(tk.END, f"{utils.clean_5etools_text(d.get('name', 'Dialogue'))}\n", "bold")
+                self.text.insert(tk.END, f"{clean_5etools_text_with_conditions(d.get('name', 'Dialogue'))}\n", "bold")
                 loc = d.get('location', '')
                 time_val = d.get('time', '')
                 if loc or time_val:
@@ -1218,7 +1315,6 @@ class StatBlockRenderer(tk.Frame):
                 self.insert_text_with_links(self.extract_entries(d.get("entries", [])), "body")
                 self.text.insert(tk.END, "\n")
 
-        # MODIFIED: Standard capitalized block header
         objects = data.get("objects", [])
         if objects:
             self.text.insert(tk.END, "Objects\n", "section_header")
@@ -1235,7 +1331,6 @@ class StatBlockRenderer(tk.Frame):
         sc_bonus = [sc for sc in sc_data if sc.get("displayAs") == "bonus"]
         sc_reactions = [sc for sc in sc_data if sc.get("displayAs") == "reaction"]
 
-        # MODIFIED: All main blocks follow sentence capitalization
         if data.get("trait") or sc_traits:
             self.text.insert(tk.END, "Traits\n", "section_header")
             self.insert_divider()
@@ -1268,7 +1363,6 @@ class StatBlockRenderer(tk.Frame):
         self.text.config(state=tk.DISABLED)
 
     def render_spell(self, data, back_callback=None):
-        import utils
         self.clear_overlays()
         self.edit_container.pack_forget()
         self.view_container.pack(fill=tk.BOTH, expand=True)
@@ -1305,7 +1399,7 @@ class StatBlockRenderer(tk.Frame):
             
         self.text.insert(tk.END, "Casting Time: ", "bold")
         if "condition" in time_data:
-            time_str += f", {utils.clean_5etools_text(time_data['condition'])}"
+            time_str += f", {clean_5etools_text_with_conditions(time_data['condition'])}"
         self.insert_text_with_links(f"{time_str}\n", "body")
         
         range_data = data.get("range", {})
@@ -1385,7 +1479,8 @@ class StatBlockRenderer(tk.Frame):
         base_f = tk.Frame(self.edit_inner, bg="#fdf1dc"); base_f.pack(fill=tk.X, pady=10)
         for r, (lbl, key, w) in enumerate([("Name:", "name", 50), ("Source:", "source", 50), ("Page:", "page", 10), ("Level (0=Cantrip):", "level", 10)]):
             tk.Label(base_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
-            en = tk.Entry(base_f, width=w, font=self.body_font); en.insert(0, str(self.edit_data.get(key, ""))); en.grid(row=r, column=1, sticky="w", padx=5, pady=2); self.edit_refs[key] = en
+            en = AutoHeightText(base_f, canvas_to_refresh=self.edit_canvas, width=w, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            en.insert(0, str(self.edit_data.get(key, ""))); en.grid(row=r, column=1, sticky="w", padx=5, pady=2); self.edit_refs[key] = en
 
         r = 4; tk.Label(base_f, text="School:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
         self.spell_school_var = tk.StringVar(value=utils.SCHOOL_MAP.get(self.edit_data.get("school", "A"), "Abjuration"))
@@ -1393,26 +1488,31 @@ class StatBlockRenderer(tk.Frame):
 
         tm = self.edit_data.get("time", [{}])[0]; tk.Label(base_f, text="Cast Time:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
         tf = tk.Frame(base_f, bg="#fdf1dc"); tf.grid(row=r, column=1, sticky="w", padx=5, pady=2); r+=1
-        self.t_num_var = tk.StringVar(value=str(tm.get("number", 1))); tk.Entry(tf, textvariable=self.t_num_var, width=5).pack(side=tk.LEFT)
+        self.t_num_var = AutoHeightText(tf, canvas_to_refresh=self.edit_canvas, width=5, font=self.body_font, bd=1, relief=tk.SOLID)
+        self.t_num_var.insert(0, str(tm.get("number", 1))); self.t_num_var.pack(side=tk.LEFT)
         self.t_unit_var = tk.StringVar(value=tm.get("unit", "action")); ttk.Combobox(tf, textvariable=self.t_unit_var, values=["action", "bonus", "reaction", "minute", "hour"], state="readonly", width=10).pack(side=tk.LEFT, padx=5)
-        self.t_cond_var = tk.StringVar(value=tm.get("condition", "")); tk.Entry(tf, textvariable=self.t_cond_var, width=25).pack(side=tk.LEFT, padx=5)
+        self.t_cond_var = AutoHeightText(tf, canvas_to_refresh=self.edit_canvas, width=25, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        self.t_cond_var.insert(0, tm.get("condition", "")); self.t_cond_var.pack(side=tk.LEFT, padx=5)
 
         rg = self.edit_data.get("range", {}); dst = rg.get("distance", {}); tk.Label(base_f, text="Range:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
         rf = tk.Frame(base_f, bg="#fdf1dc"); rf.grid(row=r, column=1, sticky="w", padx=5, pady=2); r+=1
         self.r_type_var = tk.StringVar(value=rg.get("type", "point")); ttk.Combobox(rf, textvariable=self.r_type_var, values=["point", "cone", "cube", "cylinder", "line", "sphere", "hemisphere", "radius"], state="readonly", width=10).pack(side=tk.LEFT)
-        self.r_amt_var = tk.StringVar(value=str(dst.get("amount", ""))); tk.Entry(rf, textvariable=self.r_amt_var, width=5).pack(side=tk.LEFT, padx=2)
+        self.r_amt_var = AutoHeightText(rf, canvas_to_refresh=self.edit_canvas, width=5, font=self.body_font, bd=1, relief=tk.SOLID)
+        self.r_amt_var.insert(0, str(dst.get("amount", ""))); self.r_amt_var.pack(side=tk.LEFT, padx=2)
         self.r_unit_var = tk.StringVar(value=dst.get("type", "feet")); ttk.Combobox(rf, textvariable=self.r_unit_var, values=["feet", "miles", "touch", "self", "sight", "unlimited"], state="readonly", width=8).pack(side=tk.LEFT, padx=5)
 
         cp = self.edit_data.get("components", {}); tk.Label(base_f, text="Components:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
         cf = tk.Frame(base_f, bg="#fdf1dc"); cf.grid(row=r, column=1, sticky="w", padx=5, pady=2); r+=1
         self.c_v_var = tk.BooleanVar(value="v" in cp); tk.Checkbutton(cf, text="V", variable=self.c_v_var, bg="#fdf1dc").pack(side=tk.LEFT)
         self.c_s_var = tk.BooleanVar(value="s" in cp); tk.Checkbutton(cf, text="S", variable=self.c_s_var, bg="#fdf1dc").pack(side=tk.LEFT)
-        self.c_m_var = tk.StringVar(value=cp["m"].get("text", cp["m"].get("item","")) if isinstance(cp.get("m"), dict) else cp.get("m","")); tk.Entry(cf, textvariable=self.c_m_var, width=30).pack(side=tk.LEFT, padx=5)
+        self.c_m_var = AutoHeightText(cf, canvas_to_refresh=self.edit_canvas, width=30, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        self.c_m_var.insert(0, cp["m"].get("text", cp["m"].get("item","")) if isinstance(cp.get("m"), dict) else cp.get("m","")); self.c_m_var.pack(side=tk.LEFT, padx=5)
 
         dr = self.edit_data.get("duration", [{}])[0]; tk.Label(base_f, text="Duration:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
         df = tk.Frame(base_f, bg="#fdf1dc"); df.grid(row=r, column=1, sticky="w", padx=5, pady=2)
         self.d_type_var = tk.StringVar(value=dr.get("type", "timed")); ttk.Combobox(df, textvariable=self.d_type_var, values=["timed", "instant", "permanent", "special"], state="readonly", width=10).pack(side=tk.LEFT)
-        self.d_amt_var = tk.StringVar(value=str(dr.get("duration", {}).get("amount", "1"))); tk.Entry(df, textvariable=self.d_amt_var, width=5).pack(side=tk.LEFT, padx=2)
+        self.d_amt_var = AutoHeightText(df, canvas_to_refresh=self.edit_canvas, width=5, font=self.body_font, bd=1, relief=tk.SOLID)
+        self.d_amt_var.insert(0, str(dr.get("duration", {}).get("amount", "1"))); self.d_amt_var.pack(side=tk.LEFT, padx=2)
         self.d_unit_var = tk.StringVar(value=dr.get("duration", {}).get("type", "minute")); ttk.Combobox(df, textvariable=self.d_unit_var, values=["round", "minute", "hour", "day"], state="readonly", width=8).pack(side=tk.LEFT, padx=5)
         self.d_conc_var = tk.BooleanVar(value=dr.get("concentration", False)); tk.Checkbutton(df, text="Concentration", variable=self.d_conc_var, bg="#fdf1dc").pack(side=tk.LEFT)
 
@@ -1449,11 +1549,42 @@ class StatBlockRenderer(tk.Frame):
         
         save_cb(self.original_spell_name, d)
 
+    def _show_condition_helper(self, cond_name):
+        key = cond_name.lower().strip()
+        desc = CONDITIONS_DB.get(key, "No description available for this condition.")
+        
+        top = tk.Toplevel(self)
+        top.title(f"Condition: {cond_name.title()}")
+        top.geometry("450x350")
+        top.configure(bg="#fdf1dc")
+        
+        lbl_title = tk.Label(top, text=cond_name.title(), font=("Georgia", 16, "bold"), fg="#58180d", bg="#fdf1dc", pady=10)
+        lbl_title.pack()
+        
+        txt_frame = tk.Frame(top, bg="#fdf1dc", padx=15, pady=5)
+        txt_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scroll = ttk.Scrollbar(txt_frame)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        txt = tk.Text(txt_frame, font=("Times", 12), wrap=tk.WORD, bg="#fae6c5", fg="black", bd=1, relief=tk.SOLID, yscrollcommand=scroll.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.config(command=txt.yview)
+        
+        txt.insert("1.0", desc)
+        txt.config(state=tk.DISABLED)
+        
+        btn_close = tk.Button(top, text="Close", font=("Arial", 10, "bold"), bg="#58180d", fg="white", command=top.destroy, pady=5)
+        btn_close.pack(pady=10)
+
     def _on_spell_click(self, event):
         idx = self.text.index(f"@{event.x},{event.y}")
         for t in self.text.tag_names(idx):
             if t.startswith("SPELL_TAG:"):
                 if self.spell_callback: self.spell_callback(t.split(":", 1)[1])
+                break
+            elif t.startswith("CONDITION_TAG:"):
+                self._show_condition_helper(t.split(":", 1)[1])
                 break
             elif t.startswith("LOC_MON_TAG:"):
                 if hasattr(self, 'location_link_callback') and self.location_link_callback:
@@ -1489,7 +1620,6 @@ class StatBlockRenderer(tk.Frame):
         b_edit.place(relx=1.0, x=-100, y=10, width=80, height=30)
         self.overlay_buttons.append(b_edit)
 
-
     def render_object(self, data, back_cb=None):
         self.clear_overlays()
         self.edit_container.pack_forget()
@@ -1502,7 +1632,6 @@ class StatBlockRenderer(tk.Frame):
         self.text.insert(tk.END, data.get("name", "Unknown Object") + "\n", "title")
         self.insert_divider()
 
-        # MODIFIED: All object fields adhere to sentence capitalization rules
         desc = data.get("description", "")
         if desc:
             self.text.insert(tk.END, "Description\n", "section_header")
@@ -1527,8 +1656,6 @@ class StatBlockRenderer(tk.Frame):
 
         global_level = data.get("level", 1)
         sc_data = data.get("spellcasting", [])
-        #sc_traits = [sc for sc in sc_data if sc.get("displayAs") in ["trait", "object_slots"]]
-        #sc_actions = [sc for sc in sc_data if sc.get("displayAs") in ["action", "object_innate"]]
         sc_traits = [sc for sc in sc_data if sc.get("displayAs", "trait") in ["trait", "object_slots"] and "innate" not in sc.get("name", "").lower()]
         sc_actions = [sc for sc in sc_data if sc.get("displayAs") in ["action", "object_innate", "innate"] or "innate" in sc.get("name", "").lower()]
 
@@ -1568,9 +1695,8 @@ class StatBlockRenderer(tk.Frame):
         owner_items = []
         
         def sync_all_sc():
-            for sc_dict_ref, hdr_text, ab_var, dc_var, hit_var, slots_entries in self.sc_refs:
+            for sc_dict_ref, _, ab_var, dc_var, hit_var, slots_entries in self.sc_refs:
                 try:
-                    sc_dict_ref["headerEntries"] = [hdr_text.get("1.0", "end-1c").strip()]
                     if not getattr(self, 'is_object_mode', False):
                         sc_dict_ref["ability"] = ab_var.get().lower()
                         dc_val = dc_var.get().strip()
@@ -1585,7 +1711,6 @@ class StatBlockRenderer(tk.Frame):
                 except Exception: pass
 
         def rebuild_all_sc():
-            AutoHeightText.suspended = True  # Turn on the performance safety lock
             sync_all_sc()
             self.sc_refs.clear()
             for hook in self.rebuild_sc_hooks: hook()
@@ -1620,7 +1745,7 @@ class StatBlockRenderer(tk.Frame):
         basic_frame.pack(fill=tk.X, pady=10)
         
         tk.Label(basic_frame, text="Name:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=0, sticky="e", padx=5, pady=2)
-        name_entry = tk.Entry(basic_frame, width=50, font=self.body_font)
+        name_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
         name_entry.insert(0, self.edit_data.get("name", obj_dir.stem))
         name_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
 
@@ -1696,14 +1821,25 @@ class CombatRenderer(tk.Frame):
         self.main_canvas.configure(yscrollcommand=self.main_scroll.set)
         
         self.participant_rows = []
+        self.selected_row_info = None
 
     def render_combat(self, combat_data, combat_dir):
-        self.combat_dir = combat_dir
         if not hasattr(self, 'original_data') or self.combat_dir != combat_dir:
             self.original_data = copy.deepcopy(combat_data)
             self.current_data = copy.deepcopy(combat_data)
-            
+        self.combat_dir = combat_dir
         self._redraw_workspace()
+
+    def _fetch_max_hp(self, target_path):
+        p = Path(target_path)
+        if not p.exists(): return 10
+        try:
+            json_path = list(p.glob("*.json"))[0] if p.is_dir() else p
+            if json_path.exists():
+                with open(json_path, "r", encoding="utf-8") as f:
+                    return json.load(f).get("hp", {}).get("average", 10)
+        except: pass
+        return 10
 
     def _sync_top_metadata(self):
         if hasattr(self, 'name_txt'):
@@ -1721,44 +1857,109 @@ class CombatRenderer(tk.Frame):
             p["name"] = r["name_var"].get().strip()
             p["side"] = r["side_var"].get()
             p["dead"] = r["dead_var"].get()
+            p["statuses"] = r.get("active_statuses", [])
             
             i_val = r["init_en"].get().strip()
-            if i_val == "" or not i_val.lstrip('-').isdigit():
-                p["init"] = 0
-            else:
-                p["init"] = int(i_val)
+            p["init"] = int(i_val) if i_val.lstrip('-').isdigit() else 0
                 
             h_val = r["hp_en"].get().strip()
-            p["hp"] = int(h_val) if h_val.lstrip('-').isdigit() else 0
+            curr_hp = int(h_val) if h_val.lstrip('-').isdigit() else 0
+            max_hp = self._fetch_max_hp(p.get("target", ""))
+            
+            p["damage"] = max_hp - curr_hp
 
     def _realtime_sort(self, event=None):
-        """Re-orders combat panels dynamically."""
-        # Use a safe focus getter to avoid KeyError on internal popdown widgets
-        try:
-            focused_widget = self.focus_get()
-        except:
-            focused_widget = None
+        try: focused_widget = self.focus_get()
+        except: focused_widget = None
             
         self._sync_all_rows()
-        
         self.participant_rows.sort(key=lambda r: r["data"].get("init", 0), reverse=True)
         self.current_data["participants"] = [r["data"] for r in self.participant_rows]
         
-        for r in self.participant_rows:
-            r["frame"].pack_forget()
-        for r in self.participant_rows:
-            r["frame"].pack(fill=tk.X, pady=4)
+        for r in self.participant_rows: r["frame"].pack_forget()
+        for r in self.participant_rows: r["frame"].pack(fill=tk.X, pady=4)
             
-        # Only restore focus if the widget still exists in the hierarchy
         if focused_widget and focused_widget.winfo_exists():
-            try:
-                focused_widget.focus_set()
-            except:
-                pass
+            try: focused_widget.focus_set()
+            except: pass
+
+    def _modify_selected_hp(self, delta):
+        if not self.selected_row_info:
+            messagebox.showinfo("Selection Required", "Please click on a combatant's panel first to select them.")
+            return
+        try:
+            hp_widget = self.selected_row_info["hp_en"]
+            current_hp_text = hp_widget.get().strip()
+            current_hp = int(current_hp_text) if current_hp_text.lstrip('-').isdigit() else 0
+            
+            new_hp = current_hp + delta
+            if new_hp < 0: 
+                new_hp = 0
+            
+            hp_widget.delete(0, tk.END)
+            hp_widget.insert(0, str(new_hp))
+            
+            if "update_colors_cb" in self.selected_row_info:
+                self.selected_row_info["update_colors_cb"]()
+            self._sync_all_rows()
+        except Exception: pass
+
+    def _change_selected_state(self, state_type):
+        if not self.selected_row_info:
+            messagebox.showinfo("Selection Required", "Please click on a combatant's panel first to select them.")
+            return
+        if state_type == "Dead":
+            self.selected_row_info["dead_var"].set(True)
+        else:
+            self.selected_row_info["side_var"].set(state_type)
+            self.selected_row_info["dead_var"].set(False)
+            
+        if "update_colors_cb" in self.selected_row_info:
+            self.selected_row_info["update_colors_cb"]()
+        self._realtime_sort()
+
+    def _on_top_init_changed(self, event=None):
+        if not self.selected_row_info: return
+        val = self.top_init_combo.get()
+        self.selected_row_info["init_en"].delete(0, tk.END)
+        self.selected_row_info["init_en"].insert(0, val)
+        self._realtime_sort()
+
+    def _show_condition_helper(self, cond_name):
+        from stat_renderer import CONDITIONS_DB
+        key = cond_name.lower().strip()
+        desc = CONDITIONS_DB.get(key, "No description available for this condition.")
+        
+        top = tk.Toplevel(self)
+        top.title(f"Condition: {cond_name.title()}")
+        top.geometry("450x350")
+        top.configure(bg="#fdf1dc")
+        top.transient(self)
+        top.grab_set()
+        
+        lbl_title = tk.Label(top, text=cond_name.title(), font=("Georgia", 16, "bold"), fg="#58180d", bg="#fdf1dc", pady=10)
+        lbl_title.pack()
+        
+        txt_frame = tk.Frame(top, bg="#fdf1dc", padx=15, pady=5)
+        txt_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scroll = ttk.Scrollbar(txt_frame)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        txt = tk.Text(txt_frame, font=("Times", 12), wrap=tk.WORD, bg="#fae6c5", fg="black", bd=1, relief=tk.SOLID, yscrollcommand=scroll.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.config(command=txt.yview)
+        
+        txt.insert("1.0", desc)
+        txt.config(state=tk.DISABLED)
+        
+        btn_close = tk.Button(top, text="Close", font=("Arial", 10, "bold"), bg="#58180d", fg="white", command=top.destroy, pady=5)
+        btn_close.pack(pady=10)
 
     def _redraw_workspace(self):
         for w in self.main_inner.winfo_children(): w.destroy()
         self.participant_rows.clear()
+        self.selected_row_info = None
 
         top_frame = tk.Frame(self.main_inner, bg="#fdf1dc")
         top_frame.pack(fill=tk.X, pady=(0, 20))
@@ -1778,25 +1979,15 @@ class CombatRenderer(tk.Frame):
         fields_f.pack(fill=tk.X, pady=10)
         fields_f.grid_columnconfigure(1, weight=1)
 
-        tk.Label(fields_f, text="Name:", bg="#fdf1dc", font=self.body_bold).grid(row=0, column=0, sticky="ne", pady=4)
-        self.name_txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=40, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        self.name_txt.insert("1.0", self.current_data.get("name", ""))
-        self.name_txt.grid(row=0, column=1, sticky="w", padx=10, pady=4)
-
-        tk.Label(fields_f, text="Location:", bg="#fdf1dc", font=self.body_bold).grid(row=1, column=0, sticky="ne", pady=4)
-        self.loc_txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=40, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        self.loc_txt.insert("1.0", self.current_data.get("location", ""))
-        self.loc_txt.grid(row=1, column=1, sticky="w", padx=10, pady=4)
-
-        tk.Label(fields_f, text="Time:", bg="#fdf1dc", font=self.body_bold).grid(row=2, column=0, sticky="ne", pady=4)
-        self.time_txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=40, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        self.time_txt.insert("1.0", self.current_data.get("time", ""))
-        self.time_txt.grid(row=2, column=1, sticky="w", padx=10, pady=4)
-
-        tk.Label(fields_f, text="Description:", bg="#fdf1dc", font=self.body_bold).grid(row=3, column=0, sticky="ne", pady=4)
-        self.desc_txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=60, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        self.desc_txt.insert("1.0", self.current_data.get("description", ""))
-        self.desc_txt.grid(row=3, column=1, sticky="w", padx=10, pady=4)
+        for r, (lbl, key, w) in enumerate([("Name:", "name", 40), ("Location:", "location", 40), ("Time:", "time", 40), ("Description:", "description", 60)]):
+            tk.Label(fields_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="ne", pady=4)
+            txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=w, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            txt.insert("1.0", self.current_data.get(key, ""))
+            txt.grid(row=r, column=1, sticky="w", padx=10, pady=4)
+            if key == "name": self.name_txt = txt
+            elif key == "location": self.loc_txt = txt
+            elif key == "time": self.time_txt = txt
+            elif key == "description": self.desc_txt = txt
 
         tk.Label(fields_f, text="Over:", bg="#fdf1dc", font=self.body_bold).grid(row=4, column=0, sticky="ne", pady=4)
         self.over_var = tk.StringVar(value=self.current_data.get("over", "No"))
@@ -1808,23 +1999,56 @@ class CombatRenderer(tk.Frame):
         self.out_txt.grid(row=5, column=1, sticky="w", padx=10, pady=4)
 
         tk.Label(self.main_inner, text="COMBATANTS", font=self.header_font, fg="#58180d", bg="#fdf1dc").pack(anchor="w", pady=(20, 5))
-        btn_f = tk.Frame(self.main_inner, bg="#fdf1dc")
-        btn_f.pack(fill=tk.X, pady=5)
+        
+        # Row 1 Controls: Add Operations
+        controls_row1 = tk.Frame(self.main_inner, bg="#fdf1dc")
+        controls_row1.pack(fill=tk.X, pady=2)
 
-        def append_combatant(target_name, folder_type, hp_val):
+        def append_combatant(target_path, folder_type):
             self._sync_all_rows()
+            p_obj = Path(target_path)
+            short_name = p_obj.stem if p_obj.is_file() else p_obj.name
             new_fighter = {
-                "name": target_name, "target": target_name, "type": folder_type,
+                "name": short_name, "target": str(p_obj.resolve()), "type": folder_type,
                 "side": "Enemy" if folder_type == "Monsters" else "Neutral",
-                "init": 0, "hp": hp_val, "max_hp": hp_val, "dead": False
+                "init": 0, "damage": 0, "dead": False, "statuses": []
             }
             self.current_data.setdefault("participants", []).append(new_fighter)
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
             self._redraw_workspace()
 
-        tk.Button(btn_f, text="+ New Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_bestiary_cb(self.combat_dir, append_combatant)).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_f, text="+ Add Existing Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_mon_cb(append_combatant)).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_f, text="+ Add NPC", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_npc_cb(append_combatant)).pack(side=tk.LEFT, padx=5)
+        tk.Button(controls_row1, text="+ New Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_bestiary_cb(self.combat_dir, append_combatant)).pack(side=tk.LEFT, padx=3)
+        tk.Button(controls_row1, text="+ Add Existing Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_mon_cb(append_combatant)).pack(side=tk.LEFT, padx=3)
+        tk.Button(controls_row1, text="+ Add NPC", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_npc_cb(append_combatant)).pack(side=tk.LEFT, padx=3)
+
+        # Row 2 Controls: Execution Matrix Panel Block
+        controls_row2 = tk.Frame(self.main_inner, bg="#fdf1dc", pady=5)
+        controls_row2.pack(fill=tk.X, pady=(2, 10))
+
+        # 1. Initiative Selector Segment
+        tk.Label(controls_row2, text="Initiative:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(3, 2))
+        init_vals = [str(i) for i in range(-5, 31)]
+        self.top_init_combo = ttk.Combobox(controls_row2, values=init_vals, state="readonly", width=5)
+        self.top_init_combo.pack(side=tk.LEFT, padx=2)
+        self.top_init_combo.bind("<<ComboboxSelected>>", self._on_top_init_changed)
+
+        # 2. Status Selector Button
+        self.top_status_btn = tk.Button(controls_row2, text="STATUSES", bg="#fae6c5", fg="black", font=("Arial", 9, "bold"), command=lambda: self._open_status_dialog(self.selected_row_info) if self.selected_row_info else messagebox.showinfo("Selection Required", "Please select a combatant row first."))
+        self.top_status_btn.pack(side=tk.LEFT, padx=15)
+
+        # 3. Quick HP Adjustment Modifiers
+        tk.Label(controls_row2, text="Quick HP:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(5, 2))
+        for mod in [1, 5, 10]:
+            tk.Button(controls_row2, text=f"+{mod}", bg="#5cb85c", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(m)).pack(side=tk.LEFT, padx=1)
+        for mod in [1, 5, 10]:
+            tk.Button(controls_row2, text=f"-{mod}", bg="#d9534f", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(-m)).pack(side=tk.LEFT, padx=1)
+
+        # 4. Side / State Assignment Selection Subpanel
+        tk.Label(controls_row2, text="Set State:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(15, 2))
+        tk.Button(controls_row2, text="Ally", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Ally")).pack(side=tk.LEFT, padx=1)
+        tk.Button(controls_row2, text="Neutral", bg="#8a8a8a", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Neutral")).pack(side=tk.LEFT, padx=1)
+        tk.Button(controls_row2, text="Enemy", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Enemy")).pack(side=tk.LEFT, padx=1)
+        tk.Button(controls_row2, text="Dead", bg="#333333", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Dead")).pack(side=tk.LEFT, padx=1)
 
         self.parts_frame = tk.Frame(self.main_inner, bg="#fdf1dc")
         self.parts_frame.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -1832,66 +2056,894 @@ class CombatRenderer(tk.Frame):
         for p_data in self.current_data.get("participants", []):
             self._build_live_participant_panel(p_data)
 
+    def _modify_hp_via_top(self, delta):
+        self._modify_selected_hp(delta)
+
+    def _open_status_dialog(self, row_info):
+        from stat_renderer import CONDITIONS_DB
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Statuses: {row_info['name_var'].get()}")
+        dialog.geometry("380x460")
+        dialog.configure(bg="#fdf1dc")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="Select Status Effects", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack()
+        list_frame = tk.Frame(dialog, bg="#fdf1dc")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(list_frame, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=canvas.yview)
+
+        scroll_inner = tk.Frame(canvas, bg="#fae6c5")
+        window_item = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
+        
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_item, width=e.width))
+        scroll_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _on_mousewheel_scroll(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel_scroll)
+        dialog.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        current_active = set(s.lower().strip() for s in row_info.get("active_statuses", []))
+        selected_conds = set(current_active)
+
+        def toggle_row(cond_key, row_frame, lbl_widget, base_bg):
+            if cond_key in selected_conds:
+                selected_conds.remove(cond_key)
+                row_frame.configure(bg=base_bg)
+                lbl_widget.configure(bg=base_bg, fg="black")
+            else:
+                selected_conds.add(cond_key)
+                row_frame.configure(bg="#4a90e2")
+                lbl_widget.configure(bg="#4a90e2", fg="white")
+
+        for idx, cond in enumerate(sorted(list(CONDITIONS_DB.keys()))):
+            base_bg = "#f5f5f5" if idx % 2 == 0 else "#e0e0e0"
+            
+            r_frame = tk.Frame(scroll_inner, bg=base_bg, bd=0, padx=15, pady=6)
+            r_frame.pack(fill=tk.X, expand=True)
+            
+            lbl_widget = tk.Label(r_frame, text=cond.title(), font=("Times", 11, "bold"), bg=base_bg, fg="black", anchor="w")
+            lbl_widget.pack(fill=tk.X, expand=True)
+            
+            if cond in selected_conds:
+                r_frame.configure(bg="#4a90e2")
+                lbl_widget.configure(bg="#4a90e2", fg="white")
+                
+            r_frame.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
+            lbl_widget.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
+
+        def apply_selection():
+            row_info["active_statuses"] = [c.title() for c in sorted(list(CONDITIONS_DB.keys())) if c in selected_conds]
+            self._refresh_status_chips_display(row_info)
+            self._sync_all_rows()
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg="#fdf1dc", pady=10)
+        btn_frame.pack(fill=tk.X)
+        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
+        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=dialog.destroy).pack(side=tk.RIGHT, padx=35)
+
+    def _refresh_status_chips_display(self, row_info):
+        sb = row_info["status_box"]
+        sb.config(state=tk.NORMAL)
+        sb.delete("1.0", tk.END)
+        
+        active_list = row_info.get("active_statuses", [])
+        if not active_list:
+            sb.adjust_height()
+            sb.config(state=tk.DISABLED)
+            return
+
+        for i, cond_name in enumerate(active_list):
+            if i > 0:
+                sb.insert(tk.END, ", ", "normal_text")
+            tag_name = f"STATUS_LINK:{cond_name}"
+            sb.insert(tk.END, cond_name, (tag_name, "status_link"))
+            sb.tag_configure(tag_name, foreground="#ffffff", underline=True, font=("Times", 13, "bold"))
+            
+        sb.adjust_height()
+        sb.config(state=tk.DISABLED)
+
+    def _select_combatant_row(self, row_info):
+        if self.selected_row_info and self.selected_row_info["frame"].winfo_exists():
+            self.selected_row_info["frame"].configure(highlightthickness=2, highlightbackground="black", highlightcolor="black")
+        
+        self.selected_row_info = row_info
+        row_info["frame"].configure(highlightthickness=2, highlightbackground="yellow", highlightcolor="yellow")
+        
+        # Safely align top combobox tracking index metrics
+        curr_init = str(row_info["init_en"].get().strip())
+        if curr_init in [str(i) for i in range(-5, 31)]:
+            self.top_init_combo.set(curr_init)
+        else:
+            self.top_init_combo.set("0")
+
     def _build_live_participant_panel(self, p):
         def get_panel_color(side, is_dead):
             if is_dead: return "#333333"
             return {"Ally": "#4a90e2", "Enemy": "#ff4d4d", "Neutral": "#8a8a8a"}.get(side, "#8a8a8a")
 
         initial_color = get_panel_color(p.get("side", "Neutral"), p.get("dead", False))
-        panel = tk.Frame(self.parts_frame, bg=initial_color, pady=10, padx=15, bd=1, relief=tk.SOLID)
+        
+        # Consistent highlightthickness=2 configured alongside dual-state background controls to stop focus-shifting turns to gray
+        panel = tk.Frame(self.parts_frame, bg=initial_color, pady=8, padx=12, bd=1, relief=tk.SOLID, highlightthickness=2, highlightbackground="black", highlightcolor="black")
         panel.pack(fill=tk.X, pady=4)
 
-        name_var = tk.StringVar(value=p["name"])
-        name_en = tk.Entry(panel, textvariable=name_var, font=("Georgia", 12, "bold"), width=18, bg="white", fg="black", insertbackground="black")
-        name_en.pack(side=tk.LEFT, padx=5)
-
-        btn_stats = tk.Button(panel, text="STATS", bg="#fae6c5", fg="black", font=("Arial", 9, "bold"), command=lambda: (self._sync_all_rows(), self.open_statblock_cb(p["target"], p["type"])))
-        btn_stats.pack(side=tk.LEFT, padx=10)
-
+        init_hidden_entry = tk.Entry(self) 
+        init_hidden_entry.insert(0, str(p.get("init", 0)))
+        
         d_var = tk.BooleanVar(value=p.get("dead", False))
         s_var = tk.StringVar(value=p.get("side", "Neutral"))
+        row_info = {"data": p, "frame": panel, "active_statuses": p.get("statuses", []), "init_en": init_hidden_entry, "dead_var": d_var, "side_var": s_var}
+        
+        panel.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
 
-        side_cb = ttk.Combobox(panel, textvariable=s_var, values=["Ally", "Enemy", "Neutral"], state="readonly", width=10)
-        side_cb.pack(side=tk.LEFT, padx=10)
+        # Component 1: Name Field (Fixed width)
+        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=16, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
+        name_en.insert(0, p["name"])
+        name_en.pack(side=tk.LEFT, padx=5)
+        name_en.bind("<Button-1>", lambda e: [self._select_combatant_row(row_info), "continue"][1])
 
-        def update_colors(event=None):
-            new_color = get_panel_color(s_var.get(), d_var.get())
-            panel.configure(bg=new_color)
-            for child in panel.winfo_children():
-                if isinstance(child, (tk.Label, tk.Checkbutton)):
-                    child.configure(bg=new_color, activebackground=new_color)
+        # Component 2: Stats Display Trigger Button (Fixed width)
+        btn_stats = tk.Button(panel, text="STATS", bg="#fae6c5", fg="black", font=("Arial", 8, "bold"), width=6, command=lambda: (self._sync_all_rows(), self.open_statblock_cb(p["target"], p["type"])))
+        btn_stats.pack(side=tk.LEFT, padx=5)
 
-        side_cb.bind("<<ComboboxSelected>>", lambda e: (update_colors(), self._realtime_sort()))
+        btn_stats.bind("<Enter>", lambda e, data=p: self._on_stats_btn_hover_enter(e, data))
+        btn_stats.bind("<Leave>", lambda e: self._on_stats_btn_hover_leave(e))
+        btn_stats.bind("<Motion>", lambda e: self._on_stats_btn_hover_motion(e))
 
+        # Component 3: Condition Link Zone Wrapper (Overridden with infinite height calculation scaling matching 32 characters)
+        status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=32, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD, font=self.body_font)
+        status_box.pack(side=tk.LEFT, padx=10)
+        row_info["status_box"] = status_box
+        
+        def custom_adjust_height():
+            try:
+                text_content = status_box.get("1.0", "end-1c")
+                chars_per_line = 32  # Anchored to fixed visual wrap width instead of winfo unmapped fallback rules
+                total_lines = 0
+                for line in text_content.split("\n"):
+                    if not line:
+                        total_lines += 1
+                    else:
+                        total_lines += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
+                total_lines = max(1, total_lines)
+                if total_lines != int(status_box.cget("height")):
+                    status_box.configure(height=total_lines)
+                    if self.main_canvas:
+                        self.main_canvas.update_idletasks()
+                        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+            except Exception: pass
+            
+        status_box.adjust_height = custom_adjust_height
+        
+        def handle_status_box_interaction(event):
+            self._select_combatant_row(row_info)
+            idx = status_box.index(f"@{event.x},{event.y}")
+            for tag in status_box.tag_names(idx):
+                if tag.startswith("STATUS_LINK:"):
+                    c_name = tag.split(":", 1)[1]
+                    self._show_condition_helper(c_name)
+                    return "break"
+        status_box.bind("<Button-1>", handle_status_box_interaction)
+
+        status_box.tag_bind("status_link", "<Enter>", lambda e, sb=status_box: self._on_status_hover_enter(e, sb))
+        status_box.tag_bind("status_link", "<Leave>", lambda e: self._on_status_hover_leave(e))
+        status_box.tag_bind("status_link", "<Motion>", lambda e, sb=status_box: self._on_status_hover_motion(e, sb))
+
+        # Component 4: Health Matrix (Fixed width)
+        hp_container = tk.Frame(panel, bg=initial_color, width=110)
+        hp_container.pack_propagate(False)
+        hp_container.pack(side=tk.LEFT, padx=15, fill=tk.Y)
+        hp_container.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+
+        max_hp = self._fetch_max_hp(p.get("target", ""))
+        current_hp = max_hp - p.get("damage", 0)
+
+        lbl_max = tk.Label(hp_container, text=f"/ {max_hp}", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
+        lbl_max.pack(side=tk.RIGHT)
+        lbl_max.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+
+        hp_en = AutoHeightText(hp_container, canvas_to_refresh=self.main_canvas, width=4, font=("Arial", 10, "bold"), bd=1, relief=tk.SOLID)
+        hp_en.insert(0, str(current_hp))
+        hp_en.pack(side=tk.RIGHT, padx=2)
+        
+        lbl_hp = tk.Label(hp_container, text="HP:", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
+        lbl_hp.pack(side=tk.RIGHT, padx=1)
+        lbl_hp.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+
+        # Component 5: Removal Delete Controller (Fixed width)
         def delete_combatant():
             self._sync_all_rows()
+            if self.selected_row_info == row_info:
+                self.selected_row_info = None
             self.current_data["participants"].remove(p)
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
             self._redraw_workspace()
 
-        tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), command=delete_combatant).pack(side=tk.RIGHT, padx=5)
+        btn_delete = tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant)
+        btn_delete.pack(side=tk.RIGHT, padx=5)
 
-        lbl_max = tk.Label(panel, text=f"/ {p.get('max_hp', 10)}", bg=initial_color, fg="white", font=("Arial", 11, "bold"))
-        lbl_max.pack(side=tk.RIGHT)
-        hp_en = tk.Entry(panel, width=4, font=("Arial", 11, "bold"), justify="center")
-        hp_en.insert(0, str(p.get("hp", 10)))
-        hp_en.pack(side=tk.RIGHT, padx=5)
-        lbl_hp = tk.Label(panel, text="HP:", bg=initial_color, fg="white", font=("Arial", 11, "bold"))
-        lbl_hp.pack(side=tk.RIGHT, padx=2)
+        def update_colors():
+            new_color = get_panel_color(s_var.get(), d_var.get())
+            panel.configure(bg=new_color)
+            status_box.configure(bg=new_color)
+            hp_container.configure(bg=new_color)
+            lbl_max.configure(bg=new_color)
+            lbl_hp.configure(bg=new_color)
+            
+            if self.selected_row_info == row_info:
+                panel.configure(highlightbackground="yellow", highlightcolor="yellow")
+            else:
+                panel.configure(highlightbackground="black", highlightcolor="black")
+                
+            self._refresh_status_chips_display(row_info)
+            for child in panel.winfo_children():
+                if isinstance(child, tk.Label):
+                    child.configure(bg=new_color, activebackground=new_color)
 
-        init_en = tk.Entry(panel, width=3, font=("Arial", 11, "bold"), justify="center")
-        init_en.insert(0, str(p.get("init", 0)))
-        init_en.pack(side=tk.RIGHT, padx=15)
-        lbl_init = tk.Label(panel, text="Init:", bg=initial_color, fg="white", font=("Arial", 11, "bold"))
-        lbl_init.pack(side=tk.RIGHT)
-
-        init_en.bind("<KeyRelease>", self._realtime_sort)
-
-        tk.Checkbutton(panel, text="DEAD", variable=d_var, bg=initial_color, fg="white", selectcolor="#222", activebackground=initial_color, activeforeground="white", font=("Arial", 9, "bold"), command=update_colors).pack(side=tk.RIGHT, padx=10)
-
-        row_info = {
-            "data": p, "frame": panel, "name_var": name_var, "side_var": s_var,
-            "init_en": init_en, "hp_en": hp_en, "dead_var": d_var,
-            "lbl_init": lbl_init, "lbl_hp": lbl_hp, "lbl_max": lbl_max
-        }
+        row_info.update({
+            "name_var": name_en, "hp_en": hp_en, "lbl_hp": lbl_hp, "lbl_max": lbl_max,
+            "update_colors_cb": update_colors
+        })
+        
         self.participant_rows.append(row_info)
+        update_colors()
+
+    def _on_status_hover_enter(self, event, sb):
+        self._handle_status_hover(event, sb)
+
+    def _on_status_hover_motion(self, event, sb):
+        self._handle_status_hover(event, sb)
+
+    def _on_status_hover_leave(self, event):
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+            self._hover_popup = None
+            self._hover_target = None
+
+    def _handle_status_hover(self, event, sb):
+        idx = sb.index(f"@{event.x},{event.y}")
+        tags = sb.tag_names(idx)
+        target_tag = None
+        for t in tags:
+            if t.startswith("STATUS_LINK:"):
+                target_tag = t
+                break
+        if not target_tag:
+            self._on_status_hover_leave(None)
+            return
+
+        h_popup = 250
+        app_height = self.winfo_toplevel().winfo_height()
+        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
+        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+
+        if hasattr(self, "_hover_target") and self._hover_target == target_tag:
+            if hasattr(self, "_hover_popup") and self._hover_popup:
+                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+            return
+
+        self._on_status_hover_leave(None)
+        self._hover_target = target_tag
+        cond_name = target_tag.split(":", 1)[1]
+        
+        popup = tk.Toplevel(self)
+        popup.is_hover_popup = True  # Unlocks scrollwheel mapping routing rules
+        popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
+        popup.geometry(f"450x{h_popup}+{event.x_root + 15}+{y_pos}")
+        self._hover_popup = popup
+
+        from stat_renderer import CONDITIONS_DB
+        desc = CONDITIONS_DB.get(cond_name.lower().strip(), "No description available.")
+        txt = tk.Text(popup, font=("Times", 12), wrap=tk.WORD, bg="#fdf1dc", bd=0, highlightthickness=0)
+        txt.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        txt.insert("1.0", cond_name.title(), "title")
+        txt.tag_configure("title", font=("Georgia", 13, "bold"), foreground="#58180d")
+        txt.insert(tk.END, f"\n\n{desc}")
+        txt.config(state=tk.DISABLED)
+        popup.target_text_widget = txt
+
+    def _on_stats_btn_hover_enter(self, event, p_data):
+        self._handle_stats_btn_hover(event, p_data)
+
+    def _on_stats_btn_hover_motion(self, event):
+        if hasattr(self, "_stats_hover_data"):
+            self._handle_stats_btn_hover(event, self._stats_hover_data)
+
+    def _on_stats_btn_hover_leave(self, event):
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+            self._hover_popup = None
+            self._hover_target = None
+        if hasattr(self, "_stats_hover_data"):
+            delattr(self, "_stats_hover_data")
+
+    def _handle_stats_btn_hover(self, event, p_data):
+        self._stats_hover_data = p_data
+        target_tag = f"STATS_BTN:{p_data['target']}:{p_data['type']}"
+        
+        h_popup = 450
+        app_height = self.winfo_toplevel().winfo_height()
+        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
+        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+
+        if hasattr(self, "_hover_target") and self._hover_target == target_tag:
+            if hasattr(self, "_hover_popup") and self._hover_popup:
+                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+            return
+
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+
+        self._hover_target = target_tag
+        
+        popup = tk.Toplevel(self)
+        popup.is_hover_popup = True
+        popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
+        popup.geometry(f"550x{h_popup}+{event.x_root + 15}+{y_pos}")
+        self._hover_popup = popup
+
+        prefix = "LOC_MON_TAG" if p_data['type'] == "Monsters" else "LOC_NPC_TAG"
+        name = p_data['target']
+
+        toplevel = self.winfo_toplevel()
+        if hasattr(toplevel, "resolve_hover_data"):
+            data, dtype = toplevel.resolve_hover_data(prefix, name)
+            if data:
+                mini_viewer = StatBlockRenderer(popup)
+                mini_viewer.pack(fill=tk.BOTH, expand=True)
+                mini_viewer.clear_overlays()
+                mini_viewer.text.adjust_height = lambda: None
+                mini_viewer.text.configure(height=1)
+                mini_viewer.render_monster(data)
+                popup.target_text_widget = mini_viewer.text
+            else:
+                tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+
+
+import math
+import json
+import networkx as nx
+from pathlib import Path
+
+class MapGraphRenderer(tk.Frame):
+    def __init__(self, parent, map_root_dir, navigate_to_node_cb, *args, **kwargs):
+        super().__init__(parent, bg="#fdf1dc", *args, **kwargs)
+        self.map_root = Path(map_root_dir).resolve()
+        self.navigate_cb = navigate_to_node_cb
+        self.layout_path = self.map_root / "graph_layout.json"
+
+        # Live State Tracking Matrices
+        self._drag_node_id = None
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self.node_centers = {}
+        self.edge_registry = []  
+        self._current_tooltip_text = ""
+        
+        # Track active layout reference width across saving threads
+        self.current_file_ref_width = 1000
+        
+        self._last_canvas_width = 0
+        self._last_canvas_height = 0
+
+        # FEATURE: Layer Tracking State Managers
+        self.visible_layers = set()
+        self.visible_layers_initialized = False
+
+        # FEATURE: Layer Filtering Control Top Panel Bar
+        self.layers_frame = tk.Frame(self, bg="#fdf1dc")
+        self.layers_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 5))
+
+        # Viewport Structure
+        self.canvas = tk.Canvas(self, bg="#fdf1dc", highlightthickness=0)
+        self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.v_scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        
+        self.canvas.configure(xscrollcommand=self.h_scroll.set, yscrollcommand=self.v_scroll.set)
+        self.h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Interactive Event Bindings
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.canvas.tag_bind("drag_handle", "<ButtonPress-1>", self._on_node_press)
+        self.canvas.tag_bind("drag_handle", "<B1-Motion>", self._on_node_motion)
+        self.canvas.tag_bind("drag_handle", "<ButtonRelease-1>", self._on_node_release)
+        
+        self.canvas.tag_bind("link", "<Enter>", self._on_node_hover_enter)
+        self.canvas.tag_bind("link", "<Leave>", self._on_node_hover_leave)
+        self.canvas.tag_bind("link", "<Motion>", self._on_node_hover_motion)
+
+    def _toggle_layer(self, layer):
+        """Toggles a specific layer's visibility mask and triggers a screen refresh pass."""
+        if layer in self.visible_layers:
+            self.visible_layers.remove(layer)
+        else:
+            self.visible_layers.add(layer)
+        self.draw_graph()
+
+    def _get_layer_color(self, layer):
+        """Returns distinct colors for common Campaign levels with dynamic fallbacks."""
+        colors = {
+            0: "#FFB300",   # Surface (Rich Amber Gold)
+            1: "#2ECC71",   # Upper Layer 1 (Vibrant Emerald Green)
+            2: "#00E5FF",   # Upper Layer 2 (Electric Cyan / High Sky)
+            -1: "#E74C3C",  # Lower Layer 1 / Underdark Tier 1 (Vibrant Crimson Red)
+            -2: "#9B59B6",  # Lower Layer 2 / Deep Underdark (Vibrant Amethyst Purple)
+            -3: "#FF5722"   # Lower Layer 3 / Core Abyssal Plains (Blazing Deep Orange)
+        }
+        if layer in colors:
+            return colors[layer]
+        palette = ["#f4ccd6", "#e1f5fe", "#efebe9", "#f1f8e9", "#fffde7", "#f3e5f5"]
+        return palette[abs(layer) % len(palette)]
+
+    def _on_canvas_resize(self, event):
+        if event.width != self._last_canvas_width or event.height != self._last_canvas_height:
+            self._last_canvas_width = event.width
+            self._last_canvas_height = event.height
+            self.draw_graph()
+
+    def draw_graph(self):
+        self.canvas.delete("all")
+        self.node_centers.clear()
+        self.edge_registry.clear()
+        
+        nodes_map = {}
+        self._collect_nodes(self.map_root, nodes_map)
+        if not nodes_map:
+            self.canvas.create_text(200, 50, text="Map directory is empty.", font=("Georgia", 14, "italic"), fill="black")
+            return
+
+        G = nx.DiGraph()
+        for path_str, info in nodes_map.items():
+            G.add_node(path_str, name=info["name"], node_obj=info["node"])
+            
+        for path_str, info in nodes_map.items():
+            for target_item, desc in info["connections"]:
+                t_path_str = str(Path(target_item.get("path", "")).resolve()).lower()
+                target_path = next((p for p in nodes_map.keys() if p.lower() == t_path_str), None)
+                if target_path:
+                    G.add_edge(path_str, target_path, type="connection", description=desc)
+
+        for path_str, info in nodes_map.items():
+            parent_path_str = str(Path(path_str).parent)
+            if parent_path_str in nodes_map:
+                G.add_edge(parent_path_str, path_str, type="structure")
+
+        saved_nodes = {}
+        self.current_file_ref_width = 1000
+        if self.layout_path.exists():
+            try:
+                with open(self.layout_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "reference_width" in data and "nodes" in data:
+                        self.current_file_ref_width = data["reference_width"]
+                        saved_nodes = data["nodes"]
+            except: pass
+
+        current_canvas_width = self.canvas.winfo_width()
+        if current_canvas_width <= 1:
+            current_canvas_width = self.current_file_ref_width
+
+        scale_factor = current_canvas_width / self.current_file_ref_width
+        
+        is_planar, _ = nx.check_planarity(G)
+        raw_pos = nx.planar_layout(G) if is_planar else nx.spring_layout(G, k=1.8, iterations=100, seed=42)
+
+        x_vals = [c[0] for c in raw_pos.values()]
+        y_vals = [c[1] for c in raw_pos.values()]
+        min_x, max_x = min(x_vals), max(x_vals)
+        min_y, max_y = min(y_vals), max(y_vals)
+        x_range = (max_x - min_x) if max_x != min_x else 1
+        y_range = (max_y - min_y) if max_y != min_y else 1
+
+        self.node_radius = min(15, int(15 * scale_factor))  
+        needs_save_update = False
+        highest_y = 0
+
+        all_layers = set()
+        for info in nodes_map.values():
+            all_layers.update(info.get("depths", [0]))
+        sorted_layers = sorted(list(all_layers))
+
+        if not self.visible_layers_initialized:
+            self.visible_layers = set(sorted_layers)
+            self.visible_layers_initialized = True
+        else:
+            self.visible_layers = self.visible_layers.intersection(all_layers)
+
+        for widget in self.layers_frame.winfo_children():
+            widget.destroy()
+
+        if sorted_layers:
+            tk.Label(self.layers_frame, text="Layers Filter:", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+            for layer in sorted_layers:
+                is_on = layer in self.visible_layers
+                btn_bg = "#7a200d" if is_on else "#e0cbb0"
+                btn_fg = "white" if is_on else "black"
+                lbl = f"Layer {layer}"
+                
+                btn = tk.Button(
+                    self.layers_frame, text=lbl, bg=btn_bg, fg=btn_fg,
+                    font=("Arial", 9, "bold"), relief=tk.RAISED if is_on else tk.SUNKEN,
+                    command=lambda l=layer: self._toggle_layer(l)
+                )
+                btn.pack(side=tk.LEFT, padx=3)
+
+        intrinsically_visible = set()
+        for path_str, info in nodes_map.items():
+            if any(d in self.visible_layers for d in info.get("depths", [0])):
+                intrinsically_visible.add(path_str)
+
+        cross_layer_visible = set()
+        for u, v, edge_data in G.edges(data=True):
+            if edge_data.get("type") == "connection":
+                u_pri = nodes_map[u].get("depths", [0])[0]
+                v_pri = nodes_map[v].get("depths", [0])[0]
+                if u_pri != v_pri:
+                    if u in intrinsically_visible: cross_layer_visible.add(v)
+                    if v in intrinsically_visible: cross_layer_visible.add(u)
+
+        visible_nodes = intrinsically_visible.union(cross_layer_visible)
+
+        for node_id in G.nodes:
+            if node_id not in visible_nodes:
+                continue
+                
+            if node_id in saved_nodes and isinstance(saved_nodes[node_id], dict) and "x" in saved_nodes[node_id]:
+                center_x = int(saved_nodes[node_id]["x"] * scale_factor)
+                center_y = int(saved_nodes[node_id]["y"] * scale_factor)
+            else:
+                coords = raw_pos[node_id]
+                norm_x = (coords[0] - min_x) / x_range if x_range != 0 else 0.5
+                norm_y = (coords[1] - min_y) / y_range if y_range != 0 else 0.5
+                base_x = int((0.15 + norm_x * 0.70) * 1000)
+                base_y = int((0.15 + norm_y * 0.70) * 800)
+                center_x = int(base_x * scale_factor)
+                center_y = int(base_y * scale_factor)
+                saved_nodes[node_id] = {"x": base_x, "y": base_y}
+                needs_save_update = True
+                
+            self.node_centers[node_id] = [center_x, center_y]
+            if center_y > highest_y: highest_y = center_y
+
+        if needs_save_update: 
+            self._write_current_layout_to_disk(current_canvas_width)
+
+        arrow_padding = self.node_radius + max(2, int(4 * scale_factor))
+        for u, v, edge_data in G.edges(data=True):
+            if u not in visible_nodes or v not in visible_nodes:
+                continue
+            if u in self.node_centers and v in self.node_centers:
+                ux, uy = self.node_centers[u]
+                vx, vy = self.node_centers[v]
+                desc = edge_data.get("description", "")
+                
+                if edge_data.get("type") == "connection":
+                    has_reciprocal = G.has_edge(v, u) and G[v][u].get("type") == "connection"
+                    if has_reciprocal:
+                        mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
+                        dx, dy = vx - ux, vy - uy
+                        length = math.hypot(dx, dy) or 1
+                        nx_val, ny_val = -dy / length, dx / length
+                        ctrl_x = mid_x + nx_val * 35
+                        ctrl_y = mid_y + ny_val * 35
+                        
+                        tdx, tdy = vx - ctrl_x, vy - ctrl_y
+                        t_length = math.hypot(tdx, tdy) or 1
+                        end_x = vx - (tdx / t_length) * arrow_padding
+                        end_y = vy - (tdy / t_length) * arrow_padding
+                        
+                        line_id = self.canvas.create_line(ux, uy, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill="#7a200d", width=2, arrowshape=(10, 12, 4), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding": arrow_padding})
+                    else:
+                        dx, dy = vx - ux, vy - uy
+                        length = math.hypot(dx, dy) or 1
+                        end_x = vx - (dx / length) * arrow_padding
+                        end_y = vy - (dy / length) * arrow_padding
+                        
+                        line_id = self.canvas.create_line(ux, uy, end_x, end_y, arrow=tk.LAST, fill="#7a200d", width=2, arrowshape=(10, 12, 4), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
+                    
+                    if desc:
+                        self.canvas.tag_bind(line_id, "<Enter>", lambda e, lid=line_id, d=desc: self._on_edge_enter(e, lid, d))
+                        self.canvas.tag_bind(line_id, "<Motion>", self._on_edge_motion)
+                        self.canvas.tag_bind(line_id, "<Leave>", lambda e, lid=line_id: self._on_edge_leave(e, lid))
+                else:
+                    dx, dy = vx - ux, vy - uy
+                    length = math.hypot(dx, dy) or 1
+                    end_x = vx - (dx / length) * arrow_padding
+                    end_y = vy - (dy / length) * arrow_padding
+                    
+                    line_id = self.canvas.create_line(ux, uy, end_x, end_y, fill="#a89575", dash=(4, 4), width=1, arrow=tk.LAST, arrowshape=(8, 10, 3), tags=(f"from:{u}", f"to:{v}", "edge"))
+                    self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
+
+        text_offset = self.node_radius + max(5, int(8 * scale_factor))
+        for node_id, (center_x, center_y) in self.node_centers.items():
+            if node_id not in visible_nodes:
+                continue
+            info = nodes_map[node_id]
+            node_obj = info["node"]
+            
+            primary_layer = info.get("depths", [0])[0]
+            bg_color = self._get_layer_color(primary_layer)
+            border_w = 1 if node_obj.is_entity else 2
+            
+            self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, fill=bg_color, outline="#58180d", width=border_w, tags=("node", "drag_handle", f"path:{node_id}", f"group:{node_id}"))
+
+            dx_sum, dy_sum = 0, 0
+            for neighbor in G.neighbors(node_id):
+                if neighbor not in visible_nodes: continue
+                nx_c, ny_c = self.node_centers[neighbor]
+                ndx, ndy = nx_c - center_x, ny_c - center_y
+                dist = math.hypot(ndx, ndy) or 1
+                dx_sum += ndx / dist; dy_sum += ndy / dist
+            for predecessor in G.predecessors(node_id):
+                if predecessor not in visible_nodes: continue
+                px_c, py_c = self.node_centers[predecessor]
+                ndx, ndy = px_c - center_x, py_c - center_y
+                dist = math.hypot(ndx, ndy) or 1
+                dx_sum += ndx / dist; dy_sum += ndy / dist
+
+            if dy_sum >= 0:
+                text_x, text_y = center_x, center_y - text_offset
+                text_anchor = tk.S  
+            else:
+                text_x, text_y = center_x, center_y + text_offset
+                text_anchor = tk.N  
+
+            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", 10, "bold", "underline"), fill="#4a90e2", width=150, justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
+
+            self.canvas.tag_bind(text_id, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
+            self.canvas.tag_bind(text_id, "<Leave>", lambda e: self.canvas.config(cursor=""))
+            self.canvas.tag_bind(text_id, "<Button-1>", lambda e, n=node_obj: self.navigate_cb(n))
+
+        self.canvas.tag_raise("edge"); self.canvas.tag_raise("node"); self.canvas.tag_raise("link")
+        self.canvas.configure(scrollregion=(0, 0, current_canvas_width, max(700, highest_y + 120)))
+
+    def _on_edge_enter(self, event, line_id, description):
+        self.canvas.itemconfig(line_id, fill="#4a90e2", width=3.5)
+        self.canvas.config(cursor="hand2")
+        self._show_tooltip(event, description)
+
+    def _on_edge_motion(self, event):
+        self._show_tooltip(event, None)
+
+    def _on_edge_leave(self, event, line_id):
+        self.canvas.itemconfig(line_id, fill="#7a200d", width=2)
+        self.canvas.config(cursor="")
+        self.canvas.delete("tooltip")
+
+    def _show_tooltip(self, event, description):
+        self.canvas.delete("tooltip")
+        if description is None: description = self._current_tooltip_text
+        else: self._current_tooltip_text = description
+        if not description.strip(): return
+        
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+        t_id = self.canvas.create_text(cx + 15, cy + 15, text=description, font=("Arial", 10, "bold"), fill="black", anchor="nw", width=220, tags="tooltip")
+        bbox = self.canvas.bbox(t_id)
+        if bbox:
+            bx1, by1, bx2, by2 = bbox[0]-6, bbox[1]-4, bbox[2]+6, bbox[3]+4
+            bg_id = self.canvas.create_rectangle(bx1, by1, bx2, by2, fill="#fae6c5", outline="#7a200d", width=1, tags="tooltip")
+            self.canvas.tag_lower(bg_id, t_id)
+
+    def _on_node_press(self, event):
+        item = self.canvas.find_withtag("current")[0]
+        path_tag = next((t for t in self.canvas.gettags(item) if t.startswith("path:")), None)
+        if path_tag:
+            self._drag_node_id = path_tag.split("path:", 1)[1]
+            self._drag_start_x = self.canvas.canvasx(event.x)
+            self._drag_start_y = self.canvas.canvasy(event.y)
+
+    def _on_node_motion(self, event):
+        if not self._drag_node_id: return
+        cur_x = self.canvas.canvasx(event.x)
+        cur_y = self.canvas.canvasy(event.y)
+        
+        dx = cur_x - self._drag_start_x
+        dy = cur_y - self._drag_start_y
+        
+        proposed_x = self.node_centers[self._drag_node_id][0] + dx
+        proposed_y = self.node_centers[self._drag_node_id][1] + dy
+        
+        max_w = max(900, self.canvas.winfo_width())
+        clamped_x = max(self.node_radius + 20, min(max_w - (self.node_radius + 20), proposed_x))
+        clamped_y = max(self.node_radius + 25, proposed_y)
+        
+        actual_dx = clamped_x - self.node_centers[self._drag_node_id][0]
+        actual_dy = clamped_y - self.node_centers[self._drag_node_id][1]
+
+        self.canvas.move(f"group:{self._drag_node_id}", actual_dx, actual_dy)
+        self.node_centers[self._drag_node_id][0] = clamped_x
+        self.node_centers[self._drag_node_id][1] = clamped_y
+
+        for edge in self.edge_registry:
+            if edge["u"] == self._drag_node_id or edge["v"] == self._drag_node_id:
+                ux, uy = self.node_centers[edge["u"]]
+                vx, vy = self.node_centers[edge["v"]]
+                p = edge["padding"]
+                
+                if edge["curved"]:
+                    mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
+                    lx, ly = vx - ux, vy - uy
+                    length = math.hypot(lx, ly) or 1
+                    nx_val, ny_val = -ly / length, lx / length
+                    ctrl_x = mid_x + nx_val * 35
+                    ctrl_y = mid_y + ny_val * 35
+                    tdx, tdy = vx - ctrl_x, vy - ctrl_y
+                    t_length = math.hypot(tdx, tdy) or 1
+                    end_x = vx - (tdx / t_length) * p
+                    end_y = vy - (tdy / t_length) * p
+                    self.canvas.coords(edge["id"], ux, uy, ctrl_x, ctrl_y, end_x, end_y)
+                else:
+                    lx, ly = vx - ux, vy - uy
+                    length = math.hypot(lx, ly) or 1
+                    end_x = vx - (lx / length) * p
+                    end_y = vy - (ly / length) * p
+                    self.canvas.coords(edge["id"], ux, uy, end_x, end_y)
+
+        self._drag_start_x = cur_x
+        self._drag_start_y = cur_y
+
+    def _on_node_release(self, event):
+        if not self._drag_node_id: return
+        dragged_id = self._drag_node_id
+        self._drag_node_id = None
+        
+        current_width = max(100, self.canvas.winfo_width())
+        self._write_current_layout_to_disk(current_width, dragged_id=dragged_id)
+        self.draw_graph()
+
+    def _write_current_layout_to_disk(self, current_width, dragged_id=None):
+        saved_nodes = {}
+        if self.layout_path.exists():
+            try:
+                with open(self.layout_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "reference_width" in data and "nodes" in data:
+                        saved_nodes = data["nodes"]
+            except: pass
+
+        sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
+
+        if dragged_id and dragged_id in self.node_centers:
+            cx, cy = self.node_centers[dragged_id]
+            saved_nodes[dragged_id] = {
+                "x": int(round(cx / sf)),
+                "y": int(round(cy / sf))
+            }
+        else:
+            for nid, (cx, cy) in self.node_centers.items():
+                saved_nodes[nid] = {
+                    "x": int(round(cx / sf)),
+                    "y": int(round(cy / sf))
+                }
+
+        layout_data = {
+            "reference_width": self.current_file_ref_width,
+            "nodes": saved_nodes
+        }
+        try:
+            with open(self.layout_path, "w", encoding="utf-8") as f: 
+                json.dump(layout_data, f, indent=4)
+        except Exception as e: 
+            print(f"Failed layout write: {e}")
+
+    def _collect_nodes(self, current_path: Path, nodes_map: dict, level=0):
+        from models import Node
+        if current_path != self.map_root:
+            jsons = list(current_path.glob("*.json"))
+            stat_path = jsons[0] if jsons else (current_path / f"{current_path.name}.json" if (current_path / f"{current_path.name}.json").exists() else None)
+            display_name = current_path.name; connections = []
+            depths = [0]
+            
+            if stat_path and stat_path.exists():
+                try:
+                    with open(stat_path, "r", encoding="utf-8") as f:
+                        m_data = json.load(f)
+                        display_name = m_data.get("name", display_name)
+                        connections = [(c.get("target"), c.get("description", "")) for c in m_data.get("connections", []) if c.get("target")]
+                        depths = m_data.get("depths", [0])
+                        if not isinstance(depths, list): depths = [depths]
+                except: pass
+                
+            nodes_map[str(current_path)] = {
+                "node": Node(name=display_name, path=current_path, is_entity=bool(jsons), level=level, stat_path=stat_path), 
+                "name": display_name, 
+                "connections": connections,
+                "depths": depths
+            }
+        if current_path.is_dir():
+            for sub_p in current_path.iterdir():
+                if sub_p.is_dir(): self._collect_nodes(sub_p, nodes_map, level + 1)
+
+
+    def _on_node_hover_enter(self, event):
+        self._handle_node_hover(event)
+
+    def _on_node_hover_motion(self, event):
+        self._handle_node_hover(event)
+
+    def _on_node_hover_leave(self, event):
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+            self._hover_popup = None
+            self._hover_target = None
+
+    def _handle_node_hover(self, event):
+        if self._drag_node_id:  
+            self._on_node_hover_leave(None)
+            return
+
+        items = self.canvas.find_withtag("current")
+        if not items:
+            self._on_node_hover_leave(None)
+            return
+            
+        item = items[0]
+        tags = self.canvas.gettags(item)
+        node_id = None
+        for t in tags:
+            if t.startswith("path:"):
+                node_id = t.split("path:", 1)[1]
+                break
+        if not node_id:
+            for t in tags:
+                if t not in ["link", "current", "edge", "node", "drag_handle"] and not t.startswith("group:"):
+                    node_id = t
+                    break
+        if not node_id:
+            self._on_node_hover_leave(None)
+            return
+
+        h_popup = 450
+        app_height = self.winfo_toplevel().winfo_height()
+        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
+        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+
+        if hasattr(self, "_hover_target") and self._hover_target == node_id:
+            if hasattr(self, "_hover_popup") and self._hover_popup:
+                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+            return
+
+        self._on_node_hover_leave(None)
+        self._hover_target = node_id
+        
+        popup = tk.Toplevel(self)
+        popup.is_hover_popup = True  # Unlocks scrollwheel mapping routing rules
+        popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
+        popup.geometry(f"550x{h_popup}+{event.x_root + 15}+{y_pos}")
+        self._hover_popup = popup
+
+        toplevel = self.winfo_toplevel()
+        if hasattr(toplevel, "resolve_hover_data"):
+            data, dtype = toplevel.resolve_hover_data("PATH_TAG", node_id)
+            if data:
+                mini_viewer = StatBlockRenderer(popup)
+                mini_viewer.pack(fill=tk.BOTH, expand=True)
+                mini_viewer.clear_overlays()
+                mini_viewer.text.adjust_height = lambda: None
+                mini_viewer.text.configure(height=1)
+                if dtype == "location": mini_viewer.render_location(data)
+                elif dtype == "event": mini_viewer.render_event(data)
+                popup.target_text_widget = mini_viewer.text
+            else:
+                tk.Label(popup, text="No detailed tracker sheet for this node.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)

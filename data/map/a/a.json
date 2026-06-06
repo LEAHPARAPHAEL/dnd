@@ -1,33 +1,25 @@
 {
     "name": "a",
-    "description": "The city hall, lit by a huge chandelier.",
+    "description": "",
     "monsters": [],
-    "npcs": [
-        {
-            "name": "anonymous",
-            "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\NPCs\\anonymous"
-        }
-    ],
+    "npcs": [],
     "combats": [],
-    "events": [
-        {
-            "name": "b",
-            "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\Events\\b"
-        }
-    ],
-    "objects": [
-        {
-            "name": "object",
-            "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\Objects\\object.json"
-        }
-    ],
+    "events": [],
+    "objects": [],
     "connections": [
         {
             "target": {
-                "name": "c",
-                "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\c"
+                "name": "b",
+                "path": "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\b"
             },
-            "description": "Canyon route"
+            "description": ""
+        },
+        {
+            "target": {
+                "name": "c",
+                "path": "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\c"
+            },
+            "description": ""
         }
     ],
     "depths": [

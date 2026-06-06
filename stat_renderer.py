@@ -239,14 +239,19 @@ class StatBlockRenderer(tk.Frame):
             self._on_link_leave(None)
             return
 
-        h_popup = 450
-        app_height = self.winfo_toplevel().winfo_height()
-        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
-        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+        scr_w = self.winfo_screenwidth()
+        scr_h = self.winfo_screenheight()
+        popup_w = int(scr_w * 2 / 5)
+        popup_h = int(scr_h * 2 / 5)
+
+        mid_x = scr_w / 2
+        mid_y = scr_h / 2
+        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
 
         if hasattr(self, "_hover_target") and self._hover_target == target_tag:
             if hasattr(self, "_hover_popup") and self._hover_popup:
-                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
 
         self._on_link_leave(None)
@@ -254,10 +259,10 @@ class StatBlockRenderer(tk.Frame):
         prefix, name = target_tag.split(":", 1)
         
         popup = tk.Toplevel(self)
-        popup.is_hover_popup = True  # Unlocks scrollwheel mapping routing rules
+        popup.is_hover_popup = True  
         popup.wm_overrideredirect(True)
         popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
-        popup.geometry(f"550x{h_popup}+{event.x_root + 15}+{y_pos}")
+        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
 
         if prefix == "CONDITION_TAG":
@@ -615,20 +620,43 @@ class StatBlockRenderer(tk.Frame):
             return hdr_frame, tk.Frame(sec_frame, bg="#fdf1dc")
 
         def draw_simple_row(list_frame, name, storage_list):
-            row = tk.Frame(list_frame, bg="#e0cbb0", pady=4, padx=10, bd=1, relief=tk.SOLID); row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=name, font=self.body_bold, bg="#e0cbb0", fg="black").pack(side=tk.LEFT)
-            item_dict = {"name": name, "frame": row}; storage_list.append(item_dict)
-            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.pack_forget(), row.destroy(), storage_list.remove(item_dict), self.edit_inner.update_idletasks(), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
-            self.edit_inner.update_idletasks(); self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+            row = tk.Frame(list_frame, bg="#e0cbb0", pady=4, padx=10, bd=1, relief=tk.SOLID)
+            row.pack(fill=tk.X, pady=2)
+            item_dict = {"name": name, "frame": row}
+            storage_list.append(item_dict)
+            
+            # Pack deletion action trigger button first
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), 
+                      command=lambda: (row.pack_forget(), row.destroy(), storage_list.remove(item_dict), 
+                                      self.edit_inner.update_idletasks(), 
+                                      self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            
+            # Label expands flexibly up to the button
+            tk.Label(row, text=name, font=self.body_bold, bg="#e0cbb0", fg="black", anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.edit_inner.update_idletasks()
+            self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
         def draw_connection_row(list_frame, target, description=""):
-            row = tk.Frame(list_frame, bg="#f5e6ce", pady=6, padx=10, bd=1, relief=tk.SOLID); row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=f"Route To: {target}", font=self.body_bold, bg="#f5e6ce", fg="black").pack(side=tk.LEFT, padx=5)
-            desc_en = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, width=35, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-            desc_en.insert(0, description); desc_en.pack(side=tk.LEFT, padx=5)
-            item_dict = {"target": target, "desc_entry": desc_en, "frame": row}; storage["connections"].append(item_dict)
-            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.pack_forget(), row.destroy(), storage["connections"].remove(item_dict), self.edit_inner.update_idletasks(), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
-            self.edit_inner.update_idletasks(); self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
+            row = tk.Frame(list_frame, bg="#f5e6ce", pady=6, padx=10, bd=1, relief=tk.SOLID)
+            row.pack(fill=tk.X, pady=2)
+            
+            # Pack right side boundary elements first
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), 
+                      command=lambda: (row.pack_forget(), row.destroy(), storage["connections"].remove(item_dict), 
+                                      self.edit_inner.update_idletasks(), 
+                                      self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            
+            tk.Label(row, text=f"Route To: {target}", font=self.body_bold, bg="#f5e6ce", fg="black", anchor="w").pack(side=tk.LEFT, padx=5)
+            
+            # Entry box shifts width dynamically with layout frame scaling proportions
+            desc_en = AutoHeightText(row, canvas_to_refresh=self.edit_canvas, width=20, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            desc_en.insert(0, description)
+            desc_en.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+            
+            item_dict = {"target": target, "desc_entry": desc_en, "frame": row}
+            storage["connections"].append(item_dict)
+            self.edit_inner.update_idletasks()
+            self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
         m_hdr, m_lst = make_section("Monsters:"); m_lst.pack(fill=tk.X)
         tk.Button(m_hdr, text="+ New", bg="#d9ad6c", font=("Arial", 8, "bold"), command=lambda: callbacks_dict["new_mon"](lambda n: draw_simple_row(m_lst, n, storage["monsters"]))).pack(side=tk.LEFT, padx=5)
@@ -1769,13 +1797,20 @@ class StatBlockRenderer(tk.Frame):
             list_frame.pack(fill=tk.X)
             return hdr_frame, list_frame
 
-        def draw_simple_row(list_frame, name, storage_list, bg_color="#e0cbb0"):
-            row = tk.Frame(list_frame, bg=bg_color, pady=4, padx=10, bd=1, relief=tk.SOLID)
+        def draw_simple_row(list_frame, name, storage_list):
+            row = tk.Frame(list_frame, bg="#e0cbb0", pady=4, padx=10, bd=1, relief=tk.SOLID)
             row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=name, font=self.body_bold, bg=bg_color, fg="black").pack(side=tk.LEFT)
             item_dict = {"name": name, "frame": row}
             storage_list.append(item_dict)
-            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.destroy(), storage_list.remove(item_dict), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            
+            # Pack deletion action trigger button first
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), 
+                      command=lambda: (row.pack_forget(), row.destroy(), storage_list.remove(item_dict), 
+                                      self.edit_inner.update_idletasks(), 
+                                      self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
+            
+            # Label expands flexibly up to the button
+            tk.Label(row, text=name, font=self.body_bold, bg="#e0cbb0", fg="black", anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
             self.edit_inner.update_idletasks()
             self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
@@ -2185,23 +2220,52 @@ class CombatRenderer(tk.Frame):
         
         panel.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
 
-        # Component 1: Name Field (Fixed width)
-        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=16, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
+        # 1. Component 5: Removal Delete Controller (Packed right first to anchor its position)
+        def delete_combatant():
+            self._sync_all_rows()
+            if self.selected_row_info == row_info:
+                self.selected_row_info = None
+            self.current_data["participants"].remove(p)
+            self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
+            self._redraw_workspace()
+
+        btn_delete = tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant)
+        btn_delete.pack(side=tk.RIGHT, padx=5)
+
+        # 2. Component 4: Health Matrix Panel (Packed right second)
+        hp_container = tk.Frame(panel, bg=initial_color, width=100)
+        hp_container.pack_propagate(False)
+        hp_container.pack(side=tk.RIGHT, padx=10, fill=tk.Y)
+        hp_container.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+
+        max_hp = self._fetch_max_hp(p.get("target", ""))
+        current_hp = max_hp - p.get("damage", 0)
+
+        lbl_max = tk.Label(hp_container, text=f"/ {max_hp}", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
+        lbl_max.pack(side=tk.RIGHT)
+        lbl_max.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+
+        hp_en = AutoHeightText(hp_container, canvas_to_refresh=self.main_canvas, width=4, font=("Arial", 10, "bold"), bd=1, relief=tk.SOLID)
+        hp_en.insert(0, str(current_hp))
+        hp_en.pack(side=tk.RIGHT, padx=2)
+        
+        lbl_hp = tk.Label(hp_container, text="HP:", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
+        lbl_hp.pack(side=tk.RIGHT, padx=1)
+        lbl_hp.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+
+        # 3. Component 1: Name Field (Proportional relative width scaling)
+        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=12, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
         name_en.insert(0, p["name"])
         name_en.pack(side=tk.LEFT, padx=5)
         name_en.bind("<Button-1>", lambda e: [self._select_combatant_row(row_info), "continue"][1])
 
-        # Component 2: Stats Display Trigger Button (Fixed width)
+        # 4. Component 2: Stats Display Trigger Button
         btn_stats = tk.Button(panel, text="STATS", bg="#fae6c5", fg="black", font=("Arial", 8, "bold"), width=6, command=lambda: (self._sync_all_rows(), self.open_statblock_cb(p["target"], p["type"])))
         btn_stats.pack(side=tk.LEFT, padx=5)
 
-        btn_stats.bind("<Enter>", lambda e, data=p: self._on_stats_btn_hover_enter(e, data))
-        btn_stats.bind("<Leave>", lambda e: self._on_stats_btn_hover_leave(e))
-        btn_stats.bind("<Motion>", lambda e: self._on_stats_btn_hover_motion(e))
-
-        # Component 3: Condition Link Zone Wrapper (Overridden with infinite height calculation scaling matching 32 characters)
-        status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=32, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD, font=self.body_font)
-        status_box.pack(side=tk.LEFT, padx=10)
+        # 5. Component 3: Condition Link Zone (Expands to absorb 100% of all remaining horizontal frame space)
+        status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=15, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD)
+        status_box.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
         row_info["status_box"] = status_box
         
         def custom_adjust_height():
@@ -2322,14 +2386,19 @@ class CombatRenderer(tk.Frame):
             self._on_status_hover_leave(None)
             return
 
-        h_popup = 250
-        app_height = self.winfo_toplevel().winfo_height()
-        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
-        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+        scr_w = self.winfo_screenwidth()
+        scr_h = self.winfo_screenheight()
+        popup_w = int(scr_w * 2 / 5)
+        popup_h = int(scr_h * 2 / 5)
+
+        mid_x = scr_w / 2
+        mid_y = scr_h / 2
+        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
 
         if hasattr(self, "_hover_target") and self._hover_target == target_tag:
             if hasattr(self, "_hover_popup") and self._hover_popup:
-                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
 
         self._on_status_hover_leave(None)
@@ -2337,10 +2406,10 @@ class CombatRenderer(tk.Frame):
         cond_name = target_tag.split(":", 1)[1]
         
         popup = tk.Toplevel(self)
-        popup.is_hover_popup = True  # Unlocks scrollwheel mapping routing rules
+        popup.is_hover_popup = True  
         popup.wm_overrideredirect(True)
         popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
-        popup.geometry(f"450x{h_popup}+{event.x_root + 15}+{y_pos}")
+        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
 
         from stat_renderer import CONDITIONS_DB
@@ -2373,14 +2442,19 @@ class CombatRenderer(tk.Frame):
         self._stats_hover_data = p_data
         target_tag = f"STATS_BTN:{p_data['target']}:{p_data['type']}"
         
-        h_popup = 450
-        app_height = self.winfo_toplevel().winfo_height()
-        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
-        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+        scr_w = self.winfo_screenwidth()
+        scr_h = self.winfo_screenheight()
+        popup_w = int(scr_w * 2 / 5)
+        popup_h = int(scr_h * 2 / 5)
+
+        mid_x = scr_w / 2
+        mid_y = scr_h / 2
+        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
 
         if hasattr(self, "_hover_target") and self._hover_target == target_tag:
             if hasattr(self, "_hover_popup") and self._hover_popup:
-                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
 
         if hasattr(self, "_hover_popup") and self._hover_popup:
@@ -2393,7 +2467,7 @@ class CombatRenderer(tk.Frame):
         popup.is_hover_popup = True
         popup.wm_overrideredirect(True)
         popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
-        popup.geometry(f"550x{h_popup}+{event.x_root + 15}+{y_pos}")
+        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
 
         prefix = "LOC_MON_TAG" if p_data['type'] == "Monsters" else "LOC_NPC_TAG"
@@ -2413,11 +2487,12 @@ class CombatRenderer(tk.Frame):
             else:
                 tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
 
-
 import math
 import json
 import networkx as nx
 from pathlib import Path
+import tkinter as tk
+from tkinter import font, ttk
 
 class MapGraphRenderer(tk.Frame):
     def __init__(self, parent, map_root_dir, navigate_to_node_cb, *args, **kwargs):
@@ -2433,6 +2508,7 @@ class MapGraphRenderer(tk.Frame):
         self.node_centers = {}
         self.edge_registry = []  
         self._current_tooltip_text = ""
+        self._is_panning = False  
         
         # Track active layout reference width across saving threads
         self.current_file_ref_width = 1000
@@ -2440,11 +2516,11 @@ class MapGraphRenderer(tk.Frame):
         self._last_canvas_width = 0
         self._last_canvas_height = 0
 
-        # FEATURE: Layer Tracking State Managers
+        # Layer Tracking State Managers
         self.visible_layers = set()
         self.visible_layers_initialized = False
 
-        # FEATURE: Layer Filtering Control Top Panel Bar
+        # Layer Filtering Control Top Panel Bar
         self.layers_frame = tk.Frame(self, bg="#fdf1dc")
         self.layers_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 5))
 
@@ -2460,13 +2536,61 @@ class MapGraphRenderer(tk.Frame):
 
         # Interactive Event Bindings
         self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.canvas.type = "MapGraphRenderer"
+        
+        # Node Dragging Handles
         self.canvas.tag_bind("drag_handle", "<ButtonPress-1>", self._on_node_press)
         self.canvas.tag_bind("drag_handle", "<B1-Motion>", self._on_node_motion)
         self.canvas.tag_bind("drag_handle", "<ButtonRelease-1>", self._on_node_release)
         
+        # Background Panning Tool Hooks (Decoupled to trigger on empty space click only)
+        self.canvas.bind("<ButtonPress-1>", self._on_canvas_press, add="+")
+        self.canvas.bind("<B1-Motion>", self._on_canvas_motion, add="+")
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release, add="+")
+        
+        # Tooltip Interactivity Tags
+        self.canvas.tag_bind("node", "<Enter>", self._on_node_hover_enter)
+        self.canvas.tag_bind("node", "<Leave>", self._on_node_hover_leave)
+        self.canvas.tag_bind("node", "<Motion>", self._on_node_hover_motion)
+        
         self.canvas.tag_bind("link", "<Enter>", self._on_node_hover_enter)
         self.canvas.tag_bind("link", "<Leave>", self._on_node_hover_leave)
         self.canvas.tag_bind("link", "<Motion>", self._on_node_hover_motion)
+
+    def _on_canvas_press(self, event):
+        if self._drag_node_id is not None:
+            return
+        clicked_items = self.canvas.find_withtag("current")
+        if clicked_items:
+            tags = self.canvas.gettags(clicked_items[0])
+            if any(t in tags for t in ["drag_handle", "node", "link"]):
+                return
+        self._is_panning = True
+        self.canvas.scan_mark(event.x, event.y)
+
+    def _on_canvas_motion(self, event):
+        if self._is_panning:
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _on_canvas_release(self, event):
+        self._is_panning = False
+
+    def recenter_view(self):
+        """Forces the view matrix scroll position coordinates to snap focus back onto origin point (0,0)."""
+        try:
+            scroll_region_str = self.canvas.cget("scrollregion")
+            if not scroll_region_str: return
+            sr = [float(x) for x in scroll_region_str.split()]
+            if len(sr) == 4:
+                sr_x1, sr_y1, sr_x2, sr_y2 = sr
+                sr_w = sr_x2 - sr_x1
+                sr_h = sr_y2 - sr_y1
+                if sr_w > 0 and sr_h > 0:
+                    new_x = (0.0 - sr_x1) / sr_w
+                    new_y = (0.0 - sr_y1) / sr_h
+                    self.canvas.xview_moveto(max(0.0, min(1.0, new_x)))
+                    self.canvas.yview_moveto(max(0.0, min(1.0, new_y)))
+        except Exception: pass
 
     def _toggle_layer(self, layer):
         """Toggles a specific layer's visibility mask and triggers a screen refresh pass."""
@@ -2514,7 +2638,11 @@ class MapGraphRenderer(tk.Frame):
             
         for path_str, info in nodes_map.items():
             for target_item, desc in info["connections"]:
-                t_path_str = str(Path(target_item.get("path", "")).resolve()).lower()
+                if isinstance(target_item, dict):
+                    t_path = target_item.get("path", target_item.get("target", ""))
+                else:
+                    t_path = str(target_item)
+                t_path_str = str(Path(t_path).resolve()).lower()
                 target_path = next((p for p in nodes_map.keys() if p.lower() == t_path_str), None)
                 if target_path:
                     G.add_edge(path_str, target_path, type="connection", description=desc)
@@ -2553,7 +2681,6 @@ class MapGraphRenderer(tk.Frame):
 
         self.node_radius = min(15, int(15 * scale_factor))  
         needs_save_update = False
-        highest_y = 0
 
         all_layers = set()
         for info in nodes_map.values():
@@ -2583,6 +2710,13 @@ class MapGraphRenderer(tk.Frame):
                     command=lambda l=layer: self._toggle_layer(l)
                 )
                 btn.pack(side=tk.LEFT, padx=3)
+
+        # Recenter button utility next to layers filter selectors
+        recenter_btn = tk.Button(
+            self.layers_frame, text="Recenter (0,0)", bg="#4a90e2", fg="white",
+            font=("Arial", 9, "bold"), command=self.recenter_view
+        )
+        recenter_btn.pack(side=tk.LEFT, padx=12)
 
         intrinsically_visible = set()
         for path_str, info in nodes_map.items():
@@ -2619,7 +2753,6 @@ class MapGraphRenderer(tk.Frame):
                 needs_save_update = True
                 
             self.node_centers[node_id] = [center_x, center_y]
-            if center_y > highest_y: highest_y = center_y
 
         if needs_save_update: 
             self._write_current_layout_to_disk(current_canvas_width)
@@ -2633,28 +2766,27 @@ class MapGraphRenderer(tk.Frame):
                 vx, vy = self.node_centers[v]
                 desc = edge_data.get("description", "")
                 
+                dx, dy = vx - ux, vy - uy
+                length = math.hypot(dx, dy) or 1
+                
                 if edge_data.get("type") == "connection":
                     has_reciprocal = G.has_edge(v, u) and G[v][u].get("type") == "connection"
                     if has_reciprocal:
                         mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
-                        dx, dy = vx - ux, vy - uy
-                        length = math.hypot(dx, dy) or 1
                         nx_val, ny_val = -dy / length, dx / length
                         ctrl_x = mid_x + nx_val * 35
                         ctrl_y = mid_y + ny_val * 35
                         
                         tdx, tdy = vx - ctrl_x, vy - ctrl_y
                         t_length = math.hypot(tdx, tdy) or 1
-                        end_x = vx - (tdx / t_length) * arrow_padding
-                        end_y = vy - (tdy / t_length) * arrow_padding
+                        end_x = vx - (tdx / t_length) * arrow_padding if t_length > arrow_padding else vx
+                        end_y = vy - (tdy / t_length) * arrow_padding if t_length > arrow_padding else vy
                         
                         line_id = self.canvas.create_line(ux, uy, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill="#7a200d", width=2, arrowshape=(10, 12, 4), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding": arrow_padding})
                     else:
-                        dx, dy = vx - ux, vy - uy
-                        length = math.hypot(dx, dy) or 1
-                        end_x = vx - (dx / length) * arrow_padding
-                        end_y = vy - (dy / length) * arrow_padding
+                        end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
+                        end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
                         
                         line_id = self.canvas.create_line(ux, uy, end_x, end_y, arrow=tk.LAST, fill="#7a200d", width=2, arrowshape=(10, 12, 4), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
@@ -2664,10 +2796,8 @@ class MapGraphRenderer(tk.Frame):
                         self.canvas.tag_bind(line_id, "<Motion>", self._on_edge_motion)
                         self.canvas.tag_bind(line_id, "<Leave>", lambda e, lid=line_id: self._on_edge_leave(e, lid))
                 else:
-                    dx, dy = vx - ux, vy - uy
-                    length = math.hypot(dx, dy) or 1
-                    end_x = vx - (dx / length) * arrow_padding
-                    end_y = vy - (dy / length) * arrow_padding
+                    end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
+                    end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
                     
                     line_id = self.canvas.create_line(ux, uy, end_x, end_y, fill="#a89575", dash=(4, 4), width=1, arrow=tk.LAST, arrowshape=(8, 10, 3), tags=(f"from:{u}", f"to:{v}", "edge"))
                     self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
@@ -2713,7 +2843,37 @@ class MapGraphRenderer(tk.Frame):
             self.canvas.tag_bind(text_id, "<Button-1>", lambda e, n=node_obj: self.navigate_cb(n))
 
         self.canvas.tag_raise("edge"); self.canvas.tag_raise("node"); self.canvas.tag_raise("link")
-        self.canvas.configure(scrollregion=(0, 0, current_canvas_width, max(700, highest_y + 120)))
+        self._update_scroll_region()
+
+    def _update_scroll_region(self):
+        if not self.node_centers:
+            self.canvas.configure(scrollregion=(0, 0, 1000, 800))
+            return
+        
+        cx_vals = [c[0] for c in self.node_centers.values()]
+        cy_vals = [c[1] for c in self.node_centers.values()]
+        nodes_min_x, nodes_max_x = min(cx_vals), max(cx_vals)
+        nodes_min_y, nodes_max_y = min(cy_vals), max(cy_vals)
+
+        # Fetch active frame dimensions to calculate half-screen padding dynamically
+        frame_w = max(100, self.canvas.winfo_width())
+        frame_h = max(100, self.canvas.winfo_height())
+        buffer_x = frame_w / 2
+        buffer_y = frame_h / 2
+
+        # Lock down scroll region to prevent dragging the canvas past 1/2 screen past extremes
+        min_region_x = nodes_min_x - buffer_x
+        max_region_x = nodes_max_x + buffer_x
+        min_region_y = nodes_min_y - buffer_y
+        max_region_y = nodes_max_y + buffer_y
+
+        # Establish baseline size boundary limits
+        if min_region_x > 0: min_region_x = 0
+        if min_region_y > 0: min_region_y = 0
+        if max_region_x < frame_w: max_region_x = frame_w
+        if max_region_y < frame_h: max_region_y = frame_h
+
+        self.canvas.configure(scrollregion=(min_region_x, min_region_y, max_region_x, max_region_y))
 
     def _on_edge_enter(self, event, line_id, description):
         self.canvas.itemconfig(line_id, fill="#4a90e2", width=3.5)
@@ -2761,17 +2921,11 @@ class MapGraphRenderer(tk.Frame):
         
         proposed_x = self.node_centers[self._drag_node_id][0] + dx
         proposed_y = self.node_centers[self._drag_node_id][1] + dy
-        
-        max_w = max(900, self.canvas.winfo_width())
-        clamped_x = max(self.node_radius + 20, min(max_w - (self.node_radius + 20), proposed_x))
-        clamped_y = max(self.node_radius + 25, proposed_y)
-        
-        actual_dx = clamped_x - self.node_centers[self._drag_node_id][0]
-        actual_dy = clamped_y - self.node_centers[self._drag_node_id][1]
 
-        self.canvas.move(f"group:{self._drag_node_id}", actual_dx, actual_dy)
-        self.node_centers[self._drag_node_id][0] = clamped_x
-        self.node_centers[self._drag_node_id][1] = clamped_y
+        # Nodes are moved without any viewport walls/clamping limits applied
+        self.canvas.move(f"group:{self._drag_node_id}", dx, dy)
+        self.node_centers[self._drag_node_id][0] = proposed_x
+        self.node_centers[self._drag_node_id][1] = proposed_y
 
         for edge in self.edge_registry:
             if edge["u"] == self._drag_node_id or edge["v"] == self._drag_node_id:
@@ -2779,27 +2933,29 @@ class MapGraphRenderer(tk.Frame):
                 vx, vy = self.node_centers[edge["v"]]
                 p = edge["padding"]
                 
+                lx, ly = vx - ux, vy - uy
+                length = math.hypot(lx, ly) or 1
+                
                 if edge["curved"]:
                     mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
-                    lx, ly = vx - ux, vy - uy
-                    length = math.hypot(lx, ly) or 1
                     nx_val, ny_val = -ly / length, lx / length
                     ctrl_x = mid_x + nx_val * 35
                     ctrl_y = mid_y + ny_val * 35
                     tdx, tdy = vx - ctrl_x, vy - ctrl_y
                     t_length = math.hypot(tdx, tdy) or 1
-                    end_x = vx - (tdx / t_length) * p
-                    end_y = vy - (tdy / t_length) * p
+                    end_x = vx - (tdx / t_length) * p if t_length > p else vx
+                    end_y = vy - (tdy / t_length) * p if t_length > p else vy
                     self.canvas.coords(edge["id"], ux, uy, ctrl_x, ctrl_y, end_x, end_y)
                 else:
-                    lx, ly = vx - ux, vy - uy
-                    length = math.hypot(lx, ly) or 1
-                    end_x = vx - (lx / length) * p
-                    end_y = vy - (ly / length) * p
+                    end_x = vx - (lx / length) * p if length > p else vx
+                    end_y = vy - (ly / length) * p if length > p else vy
                     self.canvas.coords(edge["id"], ux, uy, end_x, end_y)
 
         self._drag_start_x = cur_x
         self._drag_start_y = cur_y
+        
+        # Grow scroll region actively during drag operations
+        self._update_scroll_region()
 
     def _on_node_release(self, event):
         if not self._drag_node_id: return
@@ -2873,7 +3029,6 @@ class MapGraphRenderer(tk.Frame):
             for sub_p in current_path.iterdir():
                 if sub_p.is_dir(): self._collect_nodes(sub_p, nodes_map, level + 1)
 
-
     def _on_node_hover_enter(self, event):
         self._handle_node_hover(event)
 
@@ -2888,7 +3043,7 @@ class MapGraphRenderer(tk.Frame):
             self._hover_target = None
 
     def _handle_node_hover(self, event):
-        if self._drag_node_id:  
+        if self._drag_node_id or self._is_panning:  
             self._on_node_hover_leave(None)
             return
 
@@ -2913,30 +3068,38 @@ class MapGraphRenderer(tk.Frame):
             self._on_node_hover_leave(None)
             return
 
-        h_popup = 450
-        app_height = self.winfo_toplevel().winfo_height()
-        cursor_y_relative = event.y_root - self.winfo_toplevel().winfo_rooty()
-        y_pos = event.y_root - h_popup - 15 if cursor_y_relative > app_height / 2 else event.y_root + 15
+        # 1. Proportional Sizing (2/5 Screen Dimensions Max Width/Height)
+        scr_w = self.winfo_screenwidth()
+        scr_h = self.winfo_screenheight()
+        popup_w = int(scr_w * 2 / 5)
+        popup_h = int(scr_h * 2 / 5)
+
+        # 2. 4-Quadrant Inverse Position Placement Tracking
+        mid_x = scr_w / 2
+        mid_y = scr_h / 2
+        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
 
         if hasattr(self, "_hover_target") and self._hover_target == node_id:
             if hasattr(self, "_hover_popup") and self._hover_popup:
-                self._hover_popup.geometry(f"+{event.x_root + 15}+{y_pos}")
+                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
 
         self._on_node_hover_leave(None)
         self._hover_target = node_id
         
         popup = tk.Toplevel(self)
-        popup.is_hover_popup = True  # Unlocks scrollwheel mapping routing rules
+        popup.is_hover_popup = True  
         popup.wm_overrideredirect(True)
         popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
-        popup.geometry(f"550x{h_popup}+{event.x_root + 15}+{y_pos}")
+        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
 
         toplevel = self.winfo_toplevel()
         if hasattr(toplevel, "resolve_hover_data"):
             data, dtype = toplevel.resolve_hover_data("PATH_TAG", node_id)
             if data:
+                from stat_renderer import StatBlockRenderer
                 mini_viewer = StatBlockRenderer(popup)
                 mini_viewer.pack(fill=tk.BOTH, expand=True)
                 mini_viewer.clear_overlays()

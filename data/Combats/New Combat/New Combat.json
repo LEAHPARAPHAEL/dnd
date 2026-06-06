@@ -7,40 +7,14 @@
     "outcome": "None",
     "participants": [
         {
-            "name": "anonymous",
-            "target": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\NPCs\\anonymous",
+            "name": "New NPC",
+            "target": "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\NPCs\\New NPC",
             "type": "NPCs",
-            "side": "Enemy",
-            "init": 9,
-            "damage": 17,
-            "dead": false,
-            "statuses": [
-                "Stunned"
-            ]
-        },
-        {
-            "name": "anonymous",
-            "target": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\NPCs\\anonymous",
-            "type": "NPCs",
-            "side": "Ally",
-            "init": 0,
-            "damage": 6,
-            "dead": false,
-            "statuses": [
-                "Invisible"
-            ]
-        },
-        {
-            "name": "anonymous",
-            "target": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\NPCs\\anonymous",
-            "type": "NPCs",
-            "side": "Ally",
+            "side": "Neutral",
             "init": 0,
             "damage": 0,
-            "dead": true,
-            "statuses": [
-                "Poisoned"
-            ]
+            "dead": false,
+            "statuses": []
         }
     ]
 }

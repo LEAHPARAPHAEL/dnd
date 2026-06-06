@@ -170,11 +170,22 @@ class DnDStatManager(tk.Tk):
         self.tree_canvas.bind("<Configure>", lambda e: self.tree_canvas.itemconfig(self.tree_window, width=e.width))
 
         self.right_frame = tk.Frame(self.paned_window, bg="#fdf1dc"); self.paned_window.add(self.right_frame, weight=3)
-        self.nav_bar = tk.Frame(self.right_frame, bg="#fdf1dc", height=40); self.nav_bar.pack(fill=tk.X, padx=10, pady=5); self.nav_bar.pack_propagate(False)
+        # Removed hardcoded height and pack_propagate restrictions so the navbar can grow vertically if text wraps
+        self.nav_bar = tk.Frame(self.right_frame, bg="#fdf1dc")
+        self.nav_bar.pack(fill=tk.X, padx=10, pady=5)
         
         self.back_btn = tk.Button(self.nav_bar, text="← BACK", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=self.navigate_back)
-        self.page_title_lbl = tk.Label(self.nav_bar, text="", font=("Georgia", 12, "bold"), bg="#fdf1dc", fg="#7a200d"); self.page_title_lbl.pack(side=tk.LEFT, padx=20)
         
+        # Configure title label to use left-anchored expansion
+        self.page_title_lbl = tk.Label(self.nav_bar, text="", font=("Georgia", 12, "bold"), bg="#fdf1dc", fg="#7a200d", anchor="w", justify=tk.LEFT)
+        self.page_title_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=20, pady=2)
+
+        # Dynamic binding to recalculate wraplength proportionally on window resizes
+        def adjust_nav_title_wrap(event):
+            avail_width = event.width - 140 # Leave a safe margin for the back button
+            if avail_width > 50:
+                self.page_title_lbl.configure(wraplength=avail_width)
+        self.nav_bar.bind("<Configure>", adjust_nav_title_wrap)
         self.view_pane = tk.Frame(self.right_frame, bg="#fdf1dc"); self.view_pane.pack(fill=tk.BOTH, expand=True)
         
         self.stat_viewer = StatBlockRenderer(self.view_pane)
@@ -792,8 +803,8 @@ class DnDStatManager(tk.Tk):
         if not fn or not fn.strip(): return
         sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
         nd = p_path / sn; nd.mkdir(parents=True, exist_ok=True)
-        if Path("./utils/default.png").exists():
-            try: Image.open("./utils/default.png").thumbnail((64,64)); Image.open("./utils/default.png").save(nd / f"{sn}.png", "PNG")
+        if Path("./utils/map_icon.png").exists():
+            try: Image.open("./utils/map_icon.png").thumbnail((64,64)); Image.open("./utils/map_icon.png").save(nd / f"{sn}.png", "PNG")
             except: pass
         self._set_node_open(p_path, True); self.refresh_tree_silent()
         self.open_page(Node(name=fn, path=nd, is_entity=False, level=len(nd.relative_to(self.map_dir).parts)), view_type="location", is_reference_click=False)
@@ -836,7 +847,8 @@ class DnDStatManager(tk.Tk):
             if jsons and not is_map and not is_evt:
                 nodes.append(Node(name=item.name, path=item, is_entity=True, level=level, icon_path=webps[0] if webps else None, stat_path=jsons[0]))
             else:
-                icon_path = Path(f"./utils/{'monster' if item==self.monsters_dir else 'npc' if item==self.npcs_dir else 'combat' if item==self.combats_dir else 'events'}.png")
+                icon_name = 'monster' if item==self.monsters_dir else 'npc' if item==self.npcs_dir else 'combat' if item==self.combats_dir else 'map_icon' if is_map else 'event_icon'
+                icon_path = Path(f"./utils/{icon_name}.png")
                 if not icon_path.exists():
                     for ext in ['.png', '.webp', '.jpg']:
                         if (item / f"{item.name}{ext}").exists(): 
@@ -859,7 +871,9 @@ class DnDStatManager(tk.Tk):
         self.image_cache.clear()
 
         def draw_node(node):
-            row = tk.Frame(self.tree_inner, bg="#fae6c5"); row.pack(fill=tk.X, pady=2); indent = node.level * 35 + 10
+            row = tk.Frame(self.tree_inner, bg="#fae6c5")
+            row.pack(fill=tk.X, pady=2)
+            indent = node.level * 35 + 10
             is_act = bool(node.action_type)
             f = ("Georgia", 13, "italic") if is_act else ("Georgia", 15, "bold") if (not node.is_entity and not is_act) else ("Georgia", 13)
             
@@ -871,12 +885,14 @@ class DnDStatManager(tk.Tk):
             else: icon_lbl = tk.Label(row, text="+" if is_act else "E" if node.is_entity else "📁", width=4, height=2, bg="#444", fg="white", cursor="hand2")
             
             icon_lbl.pack(side=tk.LEFT, padx=(indent, 15), pady=6)
-            text_lbl = tk.Label(row, text=node.name, bg="#fae6c5", fg="black", font=f, cursor="hand2"); text_lbl.pack(side=tk.LEFT, pady=6)
 
+            # Component A: Pack right-aligned delete button first to guarantee screen real estate allocation
             del_btn = None
             if not is_act and node.name not in ["Map", "Events", "Objects", "Spells", "Monsters", "NPCs", "Combats"]:
-                del_btn = tk.Label(row, text="X", bg="#fae6c5", fg="#ff4d4d", font=("Arial", 16, "bold"), cursor="hand2"); del_btn.pack(side=tk.RIGHT, padx=15)
-                del_btn.bind("<Enter>", lambda e: e.widget.configure(bg="#4a2222", fg="#ffffff")); del_btn.bind("<Leave>", lambda e: e.widget.configure(bg="#f5e6ce" if row.cget("bg") == "#f5e6ce" else "#fae6c5", fg="#ff4d4d"))
+                del_btn = tk.Label(row, text="X", bg="#fae6c5", fg="#ff4d4d", font=("Arial", 16, "bold"), cursor="hand2")
+                del_btn.pack(side=tk.RIGHT, padx=15)
+                del_btn.bind("<Enter>", lambda e: e.widget.configure(bg="#4a2222", fg="#ffffff"))
+                del_btn.bind("<Leave>", lambda e: e.widget.configure(bg="#f5e6ce" if row.cget("bg") == "#f5e6ce" else "#fae6c5", fg="#ff4d4d"))
                 def on_del(e, node=node):
                     if messagebox.askyesno("Confirm Delete", f"Delete permanently '{node.name}'?"):
                         try:
@@ -893,6 +909,18 @@ class DnDStatManager(tk.Tk):
                             self.refresh_tree_silent(); self.clear_viewer_and_tree()
                         except Exception as ex: messagebox.showerror("Error", f"Failed: {ex}")
                 del_btn.bind("<Button-1>", on_del)
+
+            # Component B: Left-aligned Text Label scales dynamically into remaining middle row fractions
+            text_lbl = tk.Label(row, text=node.name, bg="#fae6c5", fg="black", font=f, cursor="hand2", anchor="w", justify=tk.LEFT)
+            text_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=6)
+
+            # Dynamic Configuration hook adapts label wrapping width on sidebar resize events
+            def adjust_label_wrap(event, lbl=text_lbl, ind=indent):
+                # Calculate available text space (Row width minus indentation padding and static item boundaries)
+                avail_space = event.width - ind - 110
+                if avail_space > 40:
+                    lbl.configure(wraplength=avail_space)
+            row.bind("<Configure>", adjust_label_wrap)
 
             row.bind("<Enter>", lambda e: (row.configure(bg="#f5e6ce"), icon_lbl.configure(bg="#f5e6ce"), text_lbl.configure(bg="#f5e6ce"), del_btn.configure(bg="#f5e6ce") if del_btn else None))
             row.bind("<Leave>", lambda e: (row.configure(bg="#fae6c5"), icon_lbl.configure(bg="#fae6c5"), text_lbl.configure(bg="#fae6c5"), del_btn.configure(bg="#fae6c5") if del_btn else None))
@@ -912,6 +940,14 @@ class DnDStatManager(tk.Tk):
                     else: self.open_page(node, view_type="combat" if "Combats" in str(node.path) else "npc" if "NPCs" in str(node.path) else "monster", stat_path=node.stat_path)
                 else:
                     node.is_open = not node.is_open
+                    if node.is_open:
+                        def collapse_siblings(tree_nodes):
+                            for tn in tree_nodes:
+                                if tn.path != node.path and tn.path.parent == node.path.parent:
+                                    tn.is_open = False
+                                if tn.children:
+                                    collapse_siblings(tn.children)
+                        collapse_siblings(getattr(self, 'nodes', []))
                     if not node.is_open and self.current_state and self.current_state.node.path and (self.current_state.node.path == node.path or node.path in self.current_state.node.path.parents):
                         self.open_page(Node(name="Campaign Map", path=self.map_dir, is_entity=False, level=0), view_type="root_folder")
                     vt = "root_folder" if node.path in [self.map_dir, self.events_dir, self.objects_dir, self.spells_dir, self.monsters_dir, self.npcs_dir, self.combats_dir] else "event" if "Events" in str(node.path) else "location"

@@ -6,5 +6,8 @@
     "combats": [],
     "events": [],
     "objects": [],
-    "connections": []
+    "connections": [],
+    "depths": [
+        1
+    ]
 }

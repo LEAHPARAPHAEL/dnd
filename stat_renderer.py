@@ -1,10 +1,10 @@
 import tkinter as tk
-from tkinter import font, ttk, messagebox
+from tkinter import font, ttk, messagebox, simpledialog
 import re
 import json
 import copy
 import utils
-from dialogs import SpellSearchDialog, DepthsSelectionDialog
+from dialogs import SpellSearchDialog, DepthsSelectionDialog, TerrainSettingsDialog
 from pathlib import Path
 
 # ==================== CONDITIONS DATABASE ====================
@@ -2515,12 +2515,13 @@ class CombatRenderer(tk.Frame):
             else:
                 tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
 
+
 import math
 import json
 import networkx as nx
 from pathlib import Path
 import tkinter as tk
-from tkinter import font, ttk
+from tkinter import font, ttk, messagebox
 
 class MapGraphRenderer(tk.Frame):
     def __init__(self, parent, map_root_dir, navigate_to_node_cb, mode="location", *args, **kwargs):
@@ -2534,7 +2535,27 @@ class MapGraphRenderer(tk.Frame):
         self.label_prefix = "Layer" if self.mode == "location" else "Priority"
         self.data_key = "depths" if self.mode == "location" else "priority"
 
-        # Live State Tracking Matrices
+        # Active Mode Controllers
+        self.current_mode = "select"  # "select", "edge", "new", "delete"
+        self.selected_node_id = None
+        self._edge_start_node = None
+        self._new_node_parent_id = None
+        self.nodes_map = {}
+
+        self.terrain_size = 20       
+        self.terrain_color = "#2ecc71" 
+        self.terrain_path = self.map_root / "terrain_data.json"
+        
+        # --- ADD THESE THREE TRACKING LINES HERE ---
+        self._terrain_image = None
+        self._img_origin_x = 0
+        self._img_origin_y = 0
+        # -------------------------------------------
+        
+        self._load_terrain_data()  
+        self._cached_pre_shift_mode = "select"
+
+        # Live State Tracking & Event Skipping Flags
         self._drag_node_id = None
         self._drag_start_x = 0
         self._drag_start_y = 0
@@ -2542,14 +2563,19 @@ class MapGraphRenderer(tk.Frame):
         self.edge_registry = []  
         self._current_tooltip_text = ""
         self._is_panning = False  
+        self._skip_canvas_press = False  # Centralized safety check against mid-click item deletion
         
-        # Track active layout reference width across saving threads
+        # Matrix Zoom Variables
+        self.zoom_level = 1.0
+        self.MIN_ZOOM = 0.3
+        self.MAX_ZOOM = 3.0
+        
+        # Layout metrics
         self.current_file_ref_width = 1000
-        
         self._last_canvas_width = 0
         self._last_canvas_height = 0
 
-        # Layer/Priority Tracking State Managers
+        # Layer tracking managers
         self.visible_layers = set()
         self.visible_layers_initialized = False
 
@@ -2576,7 +2602,10 @@ class MapGraphRenderer(tk.Frame):
         self.canvas.tag_bind("drag_handle", "<B1-Motion>", self._on_node_motion)
         self.canvas.tag_bind("drag_handle", "<ButtonRelease-1>", self._on_node_release)
         
-        # Background Panning Tool Hooks (Decoupled to trigger on empty space click only)
+        # Connection click handles
+        self.canvas.tag_bind("edge", "<ButtonPress-1>", self._on_edge_press)
+        
+        # Background Panning Tool Hooks
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_press, add="+")
         self.canvas.bind("<B1-Motion>", self._on_canvas_motion, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release, add="+")
@@ -2590,26 +2619,151 @@ class MapGraphRenderer(tk.Frame):
         self.canvas.tag_bind("link", "<Leave>", self._on_node_hover_leave)
         self.canvas.tag_bind("link", "<Motion>", self._on_node_hover_motion)
 
+        self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set(), add="+")
+        self.winfo_toplevel().bind("<KeyPress-Shift_L>", lambda e: self._fluid_enter_terrain_brush(), add="+")
+        self.winfo_toplevel().bind("<KeyRelease-Shift_L>", lambda e: self._fluid_exit_terrain_brush(), add="+")
+        self.winfo_toplevel().bind("<KeyPress-Shift_R>", lambda e: self._fluid_enter_terrain_brush(), add="+")
+        self.winfo_toplevel().bind("<KeyRelease-Shift_R>", lambda e: self._fluid_exit_terrain_brush(), add="+")
+        self.bind("<Destroy>", lambda e: self.save_terrain_to_disk())
+
     def _on_canvas_press(self, event):
+        if self._skip_canvas_press:
+            self._skip_canvas_press = False
+            return
         if self._drag_node_id is not None:
             return
+            
+        # FIXED: Directly check the event bitmask status (1 = Shift held down) to enable fluid painting
+        if self.current_mode == "terrain" or (event.state & 0x0001):
+            if self.current_mode != "terrain":
+                self._cached_pre_shift_mode = self.current_mode
+                self.current_mode = "terrain"
+                self.canvas.config(cursor="crosshair")
+                self.draw_graph()
+            self._paint_brush_grid_cells(event.x, event.y)
+            return
+
         clicked_items = self.canvas.find_withtag("current")
         if clicked_items:
             tags = self.canvas.gettags(clicked_items[0])
-            if any(t in tags for t in ["drag_handle", "node", "link"]):
+            if any(t in tags for t in ["drag_handle", "node", "link", "edge"]):
                 return
+        
+        if self.current_mode == "new":
+            cx = self.canvas.canvasx(event.x)
+            cy = self.canvas.canvasy(event.y)
+            parent_path = Path(self._new_node_parent_id) if self._new_node_parent_id else self.map_root
+            self._handle_canvas_new_node_creation(parent_path, cx, cy)
+            self._new_node_parent_id = None
+            self.current_mode = "select"
+            self.draw_graph()
+            return
+
         self._is_panning = True
         self.canvas.scan_mark(event.x, event.y)
 
     def _on_canvas_motion(self, event):
+        if self.current_mode == "terrain" or (event.state & 0x0001):
+            self._paint_brush_grid_cells(event.x, event.y)
+            return
+            
         if self._is_panning:
             self.canvas.scan_dragto(event.x, event.y, gain=1)
 
     def _on_canvas_release(self, event):
         self._is_panning = False
 
+    def adjust_zoom(self, units):
+        factor = 1.1 if units < 0 else 0.9
+        new_zoom = self.zoom_level * factor
+        if self.MIN_ZOOM <= new_zoom <= self.MAX_ZOOM:
+            self.zoom_level = new_zoom
+            self.draw_graph()
+
+    def toggle_edge_mode(self):
+        """Toggles the current layout editor state into directional relationship linking mode."""
+        if self.current_mode == "edge":
+            self.current_mode = "select"
+            self._edge_start_node = None
+        else:
+            self.current_mode = "edge"
+            if self.selected_node_id:
+                self._edge_start_node = self.selected_node_id
+                self.selected_node_id = None  
+            else:
+                self._edge_start_node = None
+        self._new_node_parent_id = None
+        self.draw_graph()
+
+    def toggle_parent_mode(self):
+        """Toggles the current layout editor state into parent-child structural movement mode."""
+        if self.current_mode == "parent":
+            self.current_mode = "select"
+            self._edge_start_node = None
+        else:
+            self.current_mode = "parent"
+            if self.selected_node_id:
+                self._edge_start_node = self.selected_node_id
+                self.selected_node_id = None  
+            else:
+                self._edge_start_node = None
+        self._new_node_parent_id = None
+        self.draw_graph()
+
+    def toggle_new_mode(self):
+        """Toggles the editor state into interactive sub-folder creation mode."""
+        if self.current_mode == "new":
+            self.current_mode = "select"
+            self._new_node_parent_id = None
+        else:
+            self.current_mode = "new"
+            if self.selected_node_id:
+                self._new_node_parent_id = self.selected_node_id
+                self.selected_node_id = None  
+            else:
+                self._new_node_parent_id = None
+        self._edge_start_node = None
+        self.draw_graph()
+
+    def toggle_delete_mode(self):
+        """Purges an active node selection or switches workspace focus to removal mode."""
+        if self.selected_node_id:
+            self._delete_node(self.selected_node_id)
+            self.selected_node_id = None
+            self.current_mode = "select"
+            self.draw_graph()
+        else:
+            self.current_mode = "delete" if self.current_mode != "delete" else "select"
+            self._edge_start_node = None
+            self._new_node_parent_id = None
+            self.draw_graph()
+
+    def handle_shortcut(self, key):
+        """Intercepts system hotkey triggers from the main app window routing pipeline."""
+        if key == 'l':
+            self.toggle_edge_mode()
+            return True
+        elif key == 'p':
+            self.toggle_parent_mode()
+            return True
+        elif key == 'a':
+            self.toggle_new_mode()
+            return True
+        elif key in ['delete', 'backspace']:
+            self.toggle_delete_mode()
+            return True
+        elif key in ['plus', 'equal', 'add']:
+            self._adjust_selected_node_depth(1)
+            return True
+        elif key in ['minus', 'underscore', 'subtract']:
+            self._adjust_selected_node_depth(-1)
+            return True
+        elif key == 't':
+            self.open_terrain_settings_panel()
+            return True
+        return False
+
     def recenter_view(self):
-        """Forces the view matrix scroll position coordinates to snap focus back onto origin point (0,0)."""
         try:
             scroll_region_str = self.canvas.cget("scrollregion")
             if not scroll_region_str: return
@@ -2619,14 +2773,11 @@ class MapGraphRenderer(tk.Frame):
                 sr_w = sr_x2 - sr_x1
                 sr_h = sr_y2 - sr_y1
                 if sr_w > 0 and sr_h > 0:
-                    new_x = (0.0 - sr_x1) / sr_w
-                    new_y = (0.0 - sr_y1) / sr_h
-                    self.canvas.xview_moveto(max(0.0, min(1.0, new_x)))
-                    self.canvas.yview_moveto(max(0.0, min(1.0, new_y)))
+                    self.canvas.xview_moveto(max(0.0, min(1.0, (0.0 - sr_x1) / sr_w)))
+                    self.canvas.yview_moveto(max(0.0, min(1.0, (0.0 - sr_y1) / sr_h)))
         except Exception: pass
 
     def _toggle_layer(self, layer):
-        """Toggles a specific filtering mask and triggers a screen refresh pass."""
         if layer in self.visible_layers:
             self.visible_layers.remove(layer)
         else:
@@ -2634,17 +2785,8 @@ class MapGraphRenderer(tk.Frame):
         self.draw_graph()
 
     def _get_layer_color(self, layer):
-        """Returns distinct colors for layout values with dynamic fallbacks."""
-        colors = {
-            0: "#FFB300",   # Baseline (Rich Amber Gold)
-            1: "#2ECC71",   # Tier 1 (Vibrant Emerald Green)
-            2: "#00E5FF",   # Tier 2 (Electric Cyan / High Sky)
-            -1: "#E74C3C",  # Lower Tier 1 (Vibrant Crimson Red)
-            -2: "#9B59B6",  # Lower Tier 2 (Vibrant Amethyst Purple)
-            -3: "#FF5722"   # Lower Tier 3 (Blazing Deep Orange)
-        }
-        if layer in colors:
-            return colors[layer]
+        colors = {0: "#FFB300", 1: "#2ECC71", 2: "#00E5FF", -1: "#E74C3C", -2: "#9B59B6", -3: "#FF5722"}
+        if layer in colors: return colors[layer]
         palette = ["#f4ccd6", "#e1f5fe", "#efebe9", "#f1f8e9", "#fffde7", "#f3e5f5"]
         return palette[abs(layer) % len(palette)]
 
@@ -2655,39 +2797,134 @@ class MapGraphRenderer(tk.Frame):
             self.draw_graph()
 
     def draw_graph(self):
+        self._on_node_hover_leave(None)
+        self._is_panning = False
         self.canvas.delete("all")
         self.node_centers.clear()
         self.edge_registry.clear()
+        self.nodes_map.clear()
         
-        nodes_map = {}
-        self._collect_nodes(self.map_root, nodes_map)
-        if not nodes_map:
+        for widget in self.layers_frame.winfo_children():
+            widget.destroy()
+
+        current_canvas_width = self.canvas.winfo_width()
+        if current_canvas_width <= 1:
+            current_canvas_width = self.current_file_ref_width
+
+        # Set up scale vectors matching global settings
+        scale_factor = current_canvas_width / self.current_file_ref_width
+
+        # --- FIXED: RENDER GRID SQUARES FIRST ---
+        active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
+        layer_rects = self.compressed_rects.get(active_layer, [])
+
+        sf = scale_factor; zl = self.zoom_level
+        self._render_terrain_image(sf, zl)
+
+        if self.current_mode == "terrain":
+            scroll_region_str = self.canvas.cget("scrollregion")
+
+        # --- FIXED: ALIGNED ASSISTANCE GRID LINES (ELIMINATES DRIFT ACCUMULATION) ---
+        if self.current_mode == "terrain":
+            scroll_region_str = self.canvas.cget("scrollregion")
+            if scroll_region_str:
+                sr = [float(x) for x in scroll_region_str.split()]
+                sx1, sy1, sx2, sy2 = int(sr[0]), int(sr[1]), int(sr[2]), int(sr[3])
+            else:
+                sx1, sy1, sx2, sy2 = -2000, -2000, 4000, 4000
+                
+            unscaled_block = self.terrain_size
+            
+            # Render vertical lines snapped to unscaled block coordinates to eliminate truncation drift
+            # Scans from a broad bounding area (-500 to 500 blocks) safely covering the viewport range
+            for ux in range(-500, 500):
+                gx = int(ux * unscaled_block * sf * zl)
+                if sx1 <= gx <= sx2:
+                    self.canvas.create_line(gx, sy1, gx, sy2, fill="#d9ad6c", width=1, dash=(2, 4), tags="assistance_line")
+                    
+            # Render horizontal lines snapped to unscaled block coordinates
+            for uy in range(-500, 500):
+                gy = int(uy * unscaled_block * sf * zl)
+                if sy1 <= gy <= sy2:
+                    self.canvas.create_line(sx1, gy, sx2, gy, fill="#d9ad6c", width=1, dash=(2, 4), tags="assistance_line")
+
+        self._collect_nodes(self.map_root, self.nodes_map)
+        
+        sorted_layers = []
+        if self.nodes_map:
+            all_layers = set()
+            for info in self.nodes_map.values():
+                all_layers.update(info.get("depths", [0]))
+            sorted_layers = sorted(list(all_layers))
+
+            if not self.visible_layers_initialized:
+                self.visible_layers = set(sorted_layers)
+                self.visible_layers_initialized = True
+            else:
+                self.visible_layers = self.visible_layers.intersection(all_layers)
+
+        if sorted_layers:
+            tk.Label(self.layers_frame, text=f"{self.label_prefix} Filter:", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+            for layer in sorted_layers:
+                is_on = layer in self.visible_layers
+                btn = tk.Button(self.layers_frame, text=f"{self.label_prefix} {layer}", bg="#7a200d" if is_on else "#e0cbb0", fg="white" if is_on else "black",
+                                font=("Arial", 9, "bold"), relief=tk.RAISED if is_on else tk.SUNKEN, command=lambda l=layer: self._toggle_layer(l))
+                btn.pack(side=tk.LEFT, padx=3)
+
+        tk.Button(self.layers_frame, text="Recenter (0,0)", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=self.recenter_view).pack(side=tk.LEFT, padx=12)
+        
+        edge_bg = "#4a90e2" if self.current_mode == "edge" else "#e0cbb0"
+        edge_fg = "white" if self.current_mode == "edge" else "black"
+        tk.Button(self.layers_frame, text="Edge (L)", bg=edge_bg, fg=edge_fg, font=("Arial", 9, "bold"), command=self.toggle_edge_mode).pack(side=tk.LEFT, padx=3)
+
+        parent_bg = "#4a90e2" if self.current_mode == "parent" else "#e0cbb0"
+        parent_fg = "white" if self.current_mode == "parent" else "black"
+        tk.Button(self.layers_frame, text="Parent (P)", bg=parent_bg, fg=parent_fg, font=("Arial", 9, "bold"), command=self.toggle_parent_mode).pack(side=tk.LEFT, padx=3)
+
+        new_bg = "#2ecc71" if self.current_mode == "new" else "#e0cbb0"
+        new_fg = "white" if self.current_mode == "new" else "black"
+        tk.Button(self.layers_frame, text="New (A)", bg=new_bg, fg=new_fg, font=("Arial", 9, "bold"), command=self.toggle_new_mode).pack(side=tk.LEFT, padx=3)
+
+        del_bg = "#ff4d4d" if self.current_mode == "delete" else "#e0cbb0"
+        del_fg = "white" if self.current_mode == "delete" else "black"
+        tk.Button(self.layers_frame, text="Delete (Del)", bg=del_bg, fg=del_fg, font=("Arial", 9, "bold"), command=self.toggle_delete_mode).pack(side=tk.LEFT, padx=3)
+
+        try:
+            # Parse brightness vectors dynamically to prevent contrast layout clipping
+            hex_strip = self.terrain_color.lstrip('#')
+            r_val = int(hex_strip[0:2], 16)
+            g_val = int(hex_strip[2:4], 16)
+            b_val = int(hex_strip[4:6], 16)
+            # Standard W3C color relative luminance evaluation thresholds
+            text_fg = "white" if (r_val * 0.299 + g_val * 0.587 + b_val * 0.114) < 130 else "black"
+        except:
+            text_fg = "black"
+
+        terrain_btn_text = f"Terrain: {self.terrain_size}px (T)"
+        tk.Button(self.layers_frame, text=terrain_btn_text, bg=self.terrain_color, fg=text_fg, 
+                  font=("Arial", 9, "bold"), command=self.open_terrain_settings_panel).pack(side=tk.LEFT, padx=12)
+        
+        if not self.nodes_map:
             msg = f"{self.label_prefix}s directory is empty."
-            self.canvas.create_text(200, 50, text=msg, font=("Georgia", 14, "italic"), fill="black")
+            self.canvas.create_text(current_canvas_width/2 if current_canvas_width > 50 else 200, 80, text=msg, font=("Georgia", 14, "italic"), fill="black", justify="center")
             return
 
         G = nx.DiGraph()
-        for path_str, info in nodes_map.items():
+        for path_str, info in self.nodes_map.items():
             G.add_node(path_str, name=info["name"], node_obj=info["node"])
             
-        for path_str, info in nodes_map.items():
+        for path_str, info in self.nodes_map.items():
             for target_item, desc in info["connections"]:
-                if isinstance(target_item, dict):
-                    t_path = target_item.get("path", target_item.get("target", ""))
-                else:
-                    t_path = str(target_item)
+                t_path = target_item.get("path", target_item.get("target", "")) if isinstance(target_item, dict) else str(target_item)
                 t_path_str = str(Path(t_path).resolve()).lower()
-                target_path = next((p for p in nodes_map.keys() if p.lower() == t_path_str), None)
-                if target_path:
-                    G.add_edge(path_str, target_path, type="connection", description=desc)
+                target_path = next((p for p in self.nodes_map.keys() if p.lower() == t_path_str), None)
+                if target_path: G.add_edge(path_str, target_path, type="connection", description=desc)
 
-        for path_str, info in nodes_map.items():
+        for path_str, info in self.nodes_map.items():
             parent_path_str = str(Path(path_str).parent)
-            if parent_path_str in nodes_map:
-                G.add_edge(parent_path_str, path_str, type="structure")
+            if parent_path_str in self.nodes_map: G.add_edge(parent_path_str, path_str, type="structure")
 
         saved_nodes = {}
-        self.current_file_ref_width = 1000
         if self.layout_path.exists():
             try:
                 with open(self.layout_path, "r", encoding="utf-8") as f:
@@ -2697,139 +2934,80 @@ class MapGraphRenderer(tk.Frame):
                         saved_nodes = data["nodes"]
             except: pass
 
-        current_canvas_width = self.canvas.winfo_width()
-        if current_canvas_width <= 1:
-            current_canvas_width = self.current_file_ref_width
-
         scale_factor = current_canvas_width / self.current_file_ref_width
-        
         is_planar, _ = nx.check_planarity(G)
         raw_pos = nx.planar_layout(G) if is_planar else nx.spring_layout(G, k=1.8, iterations=100, seed=42)
 
-        x_vals = [c[0] for c in raw_pos.values()]
-        y_vals = [c[1] for c in raw_pos.values()]
+        x_vals = [c[0] for c in raw_pos.values()]; y_vals = [c[1] for c in raw_pos.values()]
         min_x, max_x = min(x_vals), max(x_vals)
         min_y, max_y = min(y_vals), max(y_vals)
         x_range = (max_x - min_x) if max_x != min_x else 1
         y_range = (max_y - min_y) if max_y != min_y else 1
 
-        self.node_radius = min(15, int(15 * scale_factor))  
+        self.node_radius = max(6, int(min(15, int(15 * scale_factor)) * self.zoom_level))  
         needs_save_update = False
 
-        all_layers = set()
-        for info in nodes_map.values():
-            all_layers.update(info.get("depths", [0]))
-        sorted_layers = sorted(list(all_layers))
-
-        if not self.visible_layers_initialized:
-            self.visible_layers = set(sorted_layers)
-            self.visible_layers_initialized = True
-        else:
-            self.visible_layers = self.visible_layers.intersection(all_layers)
-
-        for widget in self.layers_frame.winfo_children():
-            widget.destroy()
-
-        if sorted_layers:
-            tk.Label(self.layers_frame, text=f"{self.label_prefix} Filter:", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
-            for layer in sorted_layers:
-                is_on = layer in self.visible_layers
-                btn_bg = "#7a200d" if is_on else "#e0cbb0"
-                btn_fg = "white" if is_on else "black"
-                lbl = f"{self.label_prefix} {layer}"
-                
-                btn = tk.Button(
-                    self.layers_frame, text=lbl, bg=btn_bg, fg=btn_fg,
-                    font=("Arial", 9, "bold"), relief=tk.RAISED if is_on else tk.SUNKEN,
-                    command=lambda l=layer: self._toggle_layer(l)
-                )
-                btn.pack(side=tk.LEFT, padx=3)
-
-        recenter_btn = tk.Button(
-            self.layers_frame, text="Recenter (0,0)", bg="#4a90e2", fg="white",
-            font=("Arial", 9, "bold"), command=self.recenter_view
-        )
-        recenter_btn.pack(side=tk.LEFT, padx=12)
-
-        # Build active visibility index
         intrinsically_visible = set()
-        for path_str, info in nodes_map.items():
-            if any(d in self.visible_layers for d in info.get("depths", [0])):
-                intrinsically_visible.add(path_str)
+        for path_str, info in self.nodes_map.items():
+            if any(d in self.visible_layers for d in info.get("depths", [0])): intrinsically_visible.add(path_str)
 
-        # BRANCHING CONDITIONAL VISIBILITY LOGIC
         if self.mode == "location":
-            # Locations: Include neighboring elements connected across unselected dimensions
             cross_layer_visible = set()
             for u, v, edge_data in G.edges(data=True):
                 if edge_data.get("type") == "connection":
-                    u_pri = nodes_map[u].get("depths", [0])[0]
-                    v_pri = nodes_map[v].get("depths", [0])[0]
+                    u_pri = self.nodes_map[u].get("depths", [0])[0]
+                    v_pri = self.nodes_map[v].get("depths", [0])[0]
                     if u_pri != v_pri:
                         if u in intrinsically_visible: cross_layer_visible.add(v)
                         if v in intrinsically_visible: cross_layer_visible.add(u)
             visible_nodes = intrinsically_visible.union(cross_layer_visible)
         else:
-            # Events: Enforce strict, isolated filter criteria matching selected criteria only
             visible_nodes = intrinsically_visible
 
         for node_id in G.nodes:
-            if node_id not in visible_nodes:
-                continue
-                
+            if node_id not in visible_nodes: continue
             if node_id in saved_nodes and isinstance(saved_nodes[node_id], dict) and "x" in saved_nodes[node_id]:
-                center_x = int(saved_nodes[node_id]["x"] * scale_factor)
-                center_y = int(saved_nodes[node_id]["y"] * scale_factor)
+                center_x = int(saved_nodes[node_id]["x"] * scale_factor * self.zoom_level)
+                center_y = int(saved_nodes[node_id]["y"] * scale_factor * self.zoom_level)
             else:
                 coords = raw_pos[node_id]
                 norm_x = (coords[0] - min_x) / x_range if x_range != 0 else 0.5
                 norm_y = (coords[1] - min_y) / y_range if y_range != 0 else 0.5
                 base_x = int((0.15 + norm_x * 0.70) * 1000)
                 base_y = int((0.15 + norm_y * 0.70) * 800)
-                center_x = int(base_x * scale_factor)
-                center_y = int(base_y * scale_factor)
+                center_x = int(base_x * scale_factor * self.zoom_level)
+                center_y = int(base_y * scale_factor * self.zoom_level)
                 saved_nodes[node_id] = {"x": base_x, "y": base_y}
                 needs_save_update = True
-                
             self.node_centers[node_id] = [center_x, center_y]
 
-        if needs_save_update: 
-            self._write_current_layout_to_disk(current_canvas_width)
+        if needs_save_update: self._write_current_layout_to_disk(current_canvas_width)
 
-        arrow_padding = self.node_radius + max(2, int(4 * scale_factor))
+        arrow_padding = self.node_radius + max(2, int(4 * scale_factor * self.zoom_level))
+        edge_thickness = max(1, int(2 * self.zoom_level))
+        
         for u, v, edge_data in G.edges(data=True):
-            if u not in visible_nodes or v not in visible_nodes:
-                continue
+            if u not in visible_nodes or v not in visible_nodes: continue
             if u in self.node_centers and v in self.node_centers:
-                ux, uy = self.node_centers[u]
-                vx, vy = self.node_centers[v]
-                desc = edge_data.get("description", "")
-                
-                dx, dy = vx - ux, vy - uy
-                length = math.hypot(dx, dy) or 1
+                ux, uy = self.node_centers[u]; vx, vy = self.node_centers[v]
+                desc = edge_data.get("description", ""); dx, dy = vx - ux, vy - uy; length = math.hypot(dx, dy) or 1
                 
                 if edge_data.get("type") == "connection":
-                    has_reciprocal = G.has_edge(v, u) and G[v][u].get("type") == "connection"
-                    if has_reciprocal:
+                    if G.has_edge(v, u) and G[v][u].get("type") == "connection":
                         mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
                         nx_val, ny_val = -dy / length, dx / length
-                        ctrl_x = mid_x + nx_val * 35
-                        ctrl_y = mid_y + ny_val * 35
-                        
-                        tdx, tdy = vx - ctrl_x, vy - ctrl_y
-                        t_length = math.hypot(tdx, tdy) or 1
+                        ctrl_x = mid_x + nx_val * (35 * self.zoom_level)
+                        ctrl_y = mid_y + ny_val * (35 * self.zoom_level)
+                        tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
                         end_x = vx - (tdx / t_length) * arrow_padding if t_length > arrow_padding else vx
                         end_y = vy - (tdy / t_length) * arrow_padding if t_length > arrow_padding else vy
-                        
-                        line_id = self.canvas.create_line(ux, uy, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill="#7a200d", width=2, arrowshape=(10, 12, 4), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        line_id = self.canvas.create_line(ux, uy, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill="#7a200d", width=edge_thickness, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding": arrow_padding})
                     else:
                         end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
                         end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
-                        
-                        line_id = self.canvas.create_line(ux, uy, end_x, end_y, arrow=tk.LAST, fill="#7a200d", width=2, arrowshape=(10, 12, 4), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        line_id = self.canvas.create_line(ux, uy, end_x, end_y, arrow=tk.LAST, fill="#7a200d", width=edge_thickness, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
-                    
                     if desc:
                         self.canvas.tag_bind(line_id, "<Enter>", lambda e, lid=line_id, d=desc: self._on_edge_enter(e, lid, d))
                         self.canvas.tag_bind(line_id, "<Motion>", self._on_edge_motion)
@@ -2837,49 +3015,48 @@ class MapGraphRenderer(tk.Frame):
                 else:
                     end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
                     end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
-                    
-                    line_id = self.canvas.create_line(ux, uy, end_x, end_y, fill="#a89575", dash=(4, 4), width=1, arrow=tk.LAST, arrowshape=(8, 10, 3), tags=(f"from:{u}", f"to:{v}", "edge"))
+                    line_id = self.canvas.create_line(ux, uy, end_x, end_y, fill="#a89575", dash=(4, 4), width=max(1, int(1*self.zoom_level)), arrow=tk.LAST, arrowshape=(max(5, int(8*self.zoom_level)), max(6, int(10*self.zoom_level)), max(2, int(3*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                     self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
 
-        text_offset = self.node_radius + max(5, int(8 * scale_factor))
+        text_offset = self.node_radius + max(4, int(8 * scale_factor * self.zoom_level))
+        font_size = max(7, int(10 * self.zoom_level))
+        
         for node_id, (center_x, center_y) in self.node_centers.items():
-            if node_id not in visible_nodes:
-                continue
-            info = nodes_map[node_id]
-            node_obj = info["node"]
+            if node_id not in visible_nodes: continue
+            info = self.nodes_map[node_id]; node_obj = info["node"]
             
             primary_layer = info.get("depths", [0])[0]
             bg_color = self._get_layer_color(primary_layer)
-            border_w = 1 if node_obj.is_entity else 2
             
-            self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, fill=bg_color, outline="#58180d", width=border_w, tags=("node", "drag_handle", f"path:{node_id}", f"group:{node_id}"))
-
+            # Simplified Visual Outlines (Removed redundant thick_border property tree branches)
+            is_slc = (node_id == self.selected_node_id) or (node_id == self._edge_start_node) or (node_id == self._new_node_parent_id)
+            border_w = 4 if is_slc else (1 if node_obj.is_entity else 2)
+            outline_color = "#4a90e2" if is_slc else "#58180d"
+            
+            self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, fill=bg_color, outline=outline_color, width=border_w, tags=("node", "drag_handle", f"path:{node_id}", f"group:{node_id}"))
+            
             dx_sum, dy_sum = 0, 0
             for neighbor in G.neighbors(node_id):
                 if neighbor not in visible_nodes: continue
-                nx_c, ny_c = self.node_centers[neighbor]
-                ndx, ndy = nx_c - center_x, ny_c - center_y
-                dist = math.hypot(ndx, ndy) or 1
+                nx_c, ny_c = self.node_centers[neighbor]; ndx, ndy = nx_c - center_x, ny_c - center_y; dist = math.hypot(ndx, ndy) or 1
                 dx_sum += ndx / dist; dy_sum += ndy / dist
             for predecessor in G.predecessors(node_id):
                 if predecessor not in visible_nodes: continue
-                px_c, py_c = self.node_centers[predecessor]
-                ndx, ndy = px_c - center_x, py_c - center_y
-                dist = math.hypot(ndx, ndy) or 1
+                px_c, py_c = self.node_centers[predecessor]; ndx, ndy = px_c - center_x, py_c - center_y; dist = math.hypot(ndx, ndy) or 1
                 dx_sum += ndx / dist; dy_sum += ndy / dist
 
-            if dy_sum >= 0:
-                text_x, text_y = center_x, center_y - text_offset
-                text_anchor = tk.S  
-            else:
-                text_x, text_y = center_x, center_y + text_offset
-                text_anchor = tk.N  
+            text_x, text_y = center_x, (center_y - text_offset if dy_sum >= 0 else center_y + text_offset)
+            text_anchor = tk.S if dy_sum >= 0 else tk.N  
 
-            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", 10, "bold", "underline"), fill="#4a90e2", width=150, justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
-
+            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", font_size, "bold", "underline"), fill="#4a90e2", width=int(150*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
             self.canvas.tag_bind(text_id, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
             self.canvas.tag_bind(text_id, "<Leave>", lambda e: self.canvas.config(cursor=""))
-            self.canvas.tag_bind(text_id, "<Button-1>", lambda e, n=node_obj: self.navigate_cb(n))
+            
+            def on_text_link_click(e, n_obj=node_obj):
+                if self.current_mode == "select": self.navigate_cb(n_obj)
+                else: self._on_node_press(e)
+                return "break"
+            self.canvas.tag_bind(text_id, "<Button-1>", on_text_link_click)
 
         self.canvas.tag_raise("edge"); self.canvas.tag_raise("node"); self.canvas.tag_raise("link")
         self._update_scroll_region()
@@ -2888,96 +3065,139 @@ class MapGraphRenderer(tk.Frame):
         if not self.node_centers:
             self.canvas.configure(scrollregion=(0, 0, 1000, 800))
             return
-        
-        cx_vals = [c[0] for c in self.node_centers.values()]
-        cy_vals = [c[1] for c in self.node_centers.values()]
-        nodes_min_x, nodes_max_x = min(cx_vals), max(cx_vals)
-        nodes_min_y, nodes_max_y = min(cy_vals), max(cy_vals)
-
-        frame_w = max(100, self.canvas.winfo_width())
-        frame_h = max(100, self.canvas.winfo_height())
-        buffer_x = frame_w / 2
-        buffer_y = frame_h / 2
-
-        min_region_x = nodes_min_x - buffer_x
-        max_region_x = nodes_max_x + buffer_x
-        min_region_y = nodes_min_y - buffer_y
-        max_region_y = nodes_max_y + buffer_y
-
+        cx_vals = [c[0] for c in self.node_centers.values()]; cy_vals = [c[1] for c in self.node_centers.values()]
+        frame_w, frame_h = max(100, self.canvas.winfo_width()), max(100, self.canvas.winfo_height())
+        min_region_x, max_region_x = min(cx_vals) - (frame_w / 2), max(cx_vals) + (frame_w / 2)
+        min_region_y, max_region_y = min(cy_vals) - (frame_h / 2), max(cy_vals) + (frame_h / 2)
         if min_region_x > 0: min_region_x = 0
         if min_region_y > 0: min_region_y = 0
         if max_region_x < frame_w: max_region_x = frame_w
         if max_region_y < frame_h: max_region_y = frame_h
-
         self.canvas.configure(scrollregion=(min_region_x, min_region_y, max_region_x, max_region_y))
 
     def _on_edge_enter(self, event, line_id, description):
-        self.canvas.itemconfig(line_id, fill="#4a90e2", width=3.5)
-        self.canvas.config(cursor="hand2")
-        self._show_tooltip(event, description)
+        self.canvas.itemconfig(line_id, fill="#4a90e2", width=max(2, int(3.5*self.zoom_level)))
+        self.canvas.config(cursor="hand2"); self._show_tooltip(event, description)
 
-    def _on_edge_motion(self, event):
-        self._show_tooltip(event, None)
-
+    def _on_edge_motion(self, event): self._show_tooltip(event, None)
     def _on_edge_leave(self, event, line_id):
-        self.canvas.itemconfig(line_id, fill="#7a200d", width=2)
-        self.canvas.config(cursor="")
-        self.canvas.delete("tooltip")
+        self.canvas.itemconfig(line_id, fill="#7a200d", width=max(1, int(2*self.zoom_level)))
+        self.canvas.config(cursor=""); self.canvas.delete("tooltip")
 
     def _show_tooltip(self, event, description):
         self.canvas.delete("tooltip")
         if description is None: description = self._current_tooltip_text
         else: self._current_tooltip_text = description
         if not description.strip(): return
-        
-        cx = self.canvas.canvasx(event.x)
-        cy = self.canvas.canvasy(event.y)
+        cx, cy = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
         t_id = self.canvas.create_text(cx + 15, cy + 15, text=description, font=("Arial", 10, "bold"), fill="black", anchor="nw", width=220, tags="tooltip")
         bbox = self.canvas.bbox(t_id)
         if bbox:
-            bx1, by1, bx2, by2 = bbox[0]-6, bbox[1]-4, bbox[2]+6, bbox[3]+4
-            bg_id = self.canvas.create_rectangle(bx1, by1, bx2, by2, fill="#fae6c5", outline="#7a200d", width=1, tags="tooltip")
+            bg_id = self.canvas.create_rectangle(bbox[0]-6, bbox[1]-4, bbox[2]+6, bbox[3]+4, fill="#fae6c5", outline="#7a200d", width=1, tags="tooltip")
             self.canvas.tag_lower(bg_id, t_id)
+
+    def _on_edge_press(self, event):
+        if self.current_mode != "delete": return "break" # <-- FIXED: Returns break
+        item = self.canvas.find_withtag("current")[0]; tags = self.canvas.gettags(item)
+        from_tag = next((t for t in tags if t.startswith("from:")), None)
+        to_tag = next((t for t in tags if t.startswith("to:")), None)
+        if from_tag and to_tag:
+            u = from_tag.split("from:", 1)[1]; v = to_tag.split("to:", 1)[1]
+            
+            if str(Path(v).parent.resolve()) == str(Path(u).resolve()):
+                if messagebox.askyesno("Confirm Detach", f"Remove parent relation? This will move '{Path(v).name}' to the root folder."):
+                    self._skip_canvas_press = True
+                    self._remove_parent_child_edge(u, v)
+                    self._edge_start_node = None
+                    self.current_mode = "select"
+                    self.draw_graph()
+            else:
+                if messagebox.askyesno("Confirm Delete", "Delete this connection permanently?"):
+                    self._skip_canvas_press = True
+                    self._delete_edge_connection(u, v)
+                    self._edge_start_node = None
+                    self.current_mode = "select"
+                    self.draw_graph()
+        return "break"
 
     def _on_node_press(self, event):
         item = self.canvas.find_withtag("current")[0]
         path_tag = next((t for t in self.canvas.gettags(item) if t.startswith("path:")), None)
-        if path_tag:
-            self._drag_node_id = path_tag.split("path:", 1)[1]
+        if not path_tag: return
+        node_id = path_tag.split("path:", 1)[1]
+        
+        self._skip_canvas_press = True
+        
+        if self.current_mode == "edge":
+            if self._edge_start_node is None:
+                self._edge_start_node = node_id
+                self.canvas.itemconfig(item, outline="#4a90e2", width=4)
+            else:
+                if self._edge_start_node != node_id: 
+                    self._create_edge_connection(self._edge_start_node, node_id)
+                self._edge_start_node = None
+                self.current_mode = "select"
+                self.draw_graph()
+            return "break"
+        
+        elif self.current_mode == "parent":
+            if self._edge_start_node is None:
+                self._edge_start_node = node_id
+                self.canvas.itemconfig(item, outline="#4a90e2", width=4)
+            else:
+                if self._edge_start_node != node_id:
+                    self._create_parent_child_relation(self._edge_start_node, node_id)
+                self._edge_start_node = None
+                self.current_mode = "select"
+                self.draw_graph()
+            return "break"
+            
+        elif self.current_mode == "new":
+            self._new_node_parent_id = None if self._new_node_parent_id == node_id else node_id
+            self.draw_graph()
+            return "break"
+            
+        elif self.current_mode == "delete":
+            self._delete_node(node_id)
+            self.current_mode = "select"
+            return "break"
+            
+        else: # Standard navigation / selection mode logic block
+            self._drag_node_id = node_id
             self._drag_start_x = self.canvas.canvasx(event.x)
             self._drag_start_y = self.canvas.canvasy(event.y)
+            
+            self._is_panning = False
+            # Persistent selection toggle logic: updates look instantly without breaking dragging mechanics
+            if self.selected_node_id == node_id:
+                self.selected_node_id = None
+                info = self.nodes_map.get(node_id)
+                b_w = 1 if info and info["node"].is_entity else 2
+                self.canvas.itemconfig(item, outline="#58180d", width=b_w)
+            else:
+                self.selected_node_id = node_id
+                self.canvas.itemconfig(item, outline="#4a90e2", width=4)
+            return "break"
 
     def _on_node_motion(self, event):
-        if not self._drag_node_id: return
-        cur_x = self.canvas.canvasx(event.x)
-        cur_y = self.canvas.canvasy(event.y)
-        
-        dx = cur_x - self._drag_start_x
-        dy = cur_y - self._drag_start_y
+        if self.current_mode != "select" or not self._drag_node_id: return
+        cur_x, cur_y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        dx, dy = cur_x - self._drag_start_x, cur_y - self._drag_start_y
         
         proposed_x = self.node_centers[self._drag_node_id][0] + dx
         proposed_y = self.node_centers[self._drag_node_id][1] + dy
-
         self.canvas.move(f"group:{self._drag_node_id}", dx, dy)
-        self.node_centers[self._drag_node_id][0] = proposed_x
-        self.node_centers[self._drag_node_id][1] = proposed_y
+        self.node_centers[self._drag_node_id][0] = proposed_x; self.node_centers[self._drag_node_id][1] = proposed_y
 
         for edge in self.edge_registry:
             if edge["u"] == self._drag_node_id or edge["v"] == self._drag_node_id:
-                ux, uy = self.node_centers[edge["u"]]
-                vx, vy = self.node_centers[edge["v"]]
-                p = edge["padding"]
-                
-                lx, ly = vx - ux, vy - uy
-                length = math.hypot(lx, ly) or 1
-                
+                ux, uy = self.node_centers[edge["u"]]; vx, vy = self.node_centers[edge["v"]]; p = edge["padding"]
+                lx, ly = vx - ux, vy - uy; length = math.hypot(lx, ly) or 1
                 if edge["curved"]:
                     mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
                     nx_val, ny_val = -ly / length, lx / length
-                    ctrl_x = mid_x + nx_val * 35
-                    ctrl_y = mid_y + ny_val * 35
-                    tdx, tdy = vx - ctrl_x, vy - ctrl_y
-                    t_length = math.hypot(tdx, tdy) or 1
+                    ctrl_x, ctrl_y = mid_x + nx_val * (35 * self.zoom_level), mid_y + ny_val * (35 * self.zoom_level)
+                    tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
                     end_x = vx - (tdx / t_length) * p if t_length > p else vx
                     end_y = vy - (tdy / t_length) * p if t_length > p else vy
                     self.canvas.coords(edge["id"], ux, uy, ctrl_x, ctrl_y, end_x, end_y)
@@ -2985,19 +3205,165 @@ class MapGraphRenderer(tk.Frame):
                     end_x = vx - (lx / length) * p if length > p else vx
                     end_y = vy - (ly / length) * p if length > p else vy
                     self.canvas.coords(edge["id"], ux, uy, end_x, end_y)
-
-        self._drag_start_x = cur_x
-        self._drag_start_y = cur_y
+        self._drag_start_x, self._drag_start_y = cur_x, cur_y
         self._update_scroll_region()
 
     def _on_node_release(self, event):
-        if not self._drag_node_id: return
+        if self.current_mode != "select" or not self._drag_node_id: return
         dragged_id = self._drag_node_id
         self._drag_node_id = None
         
         current_width = max(100, self.canvas.winfo_width())
         self._write_current_layout_to_disk(current_width, dragged_id=dragged_id)
+        
+        # Safely triggers full network redraw on release to clear out any old selection highlights
         self.draw_graph()
+
+    def _create_edge_connection(self, source_id, target_id):
+        source_info = self.nodes_map.get(source_id); target_info = self.nodes_map.get(target_id)
+        if not source_info or not target_info: return
+        stat_path = source_info["node"].stat_path
+        if not stat_path or not Path(stat_path).exists():
+            stat_path = Path(source_id) / f"{Path(source_id).name}.json"
+            default_data = {"name": source_info["name"], "description": "", "monsters": [], "npcs": [], "combats": [], "events" if self.mode == "location" else "locations": [], "objects": [], "connections": []}
+            with open(stat_path, "w", encoding="utf-8") as f: json.dump(default_data, f, indent=4)
+        try:
+            with open(stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+            if "connections" not in data: data["connections"] = []
+            if not any(str(Path(c.get("target", {}).get("path") if isinstance(c.get("target"), dict) else c.get("target", "")).resolve()).lower() == str(Path(target_id).resolve()).lower() for c in data["connections"]):
+                data["connections"].append({"target": {"name": target_info["name"], "path": str(Path(target_id).resolve())}, "description": ""})
+                with open(stat_path, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+        except Exception as e: print(f"Edge creation save operation failed: {e}")
+
+    def _delete_edge_connection(self, source_id, target_id):
+        source_info = self.nodes_map.get(source_id)
+        if not source_info: return
+        stat_path = source_info["node"].stat_path
+        if not stat_path or not Path(stat_path).exists(): return
+        try:
+            with open(stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+            if "connections" in data:
+                orig_len = len(data["connections"])
+                data["connections"] = [c for c in data["connections"] if str(Path(c.get("target", {}).get("path") if isinstance(c.get("target"), dict) else c.get("target", "")).resolve()).lower() != str(Path(target_id).resolve()).lower()]
+                if len(data["connections"]) != orig_len:
+                    with open(stat_path, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+                    toplevel = self.winfo_toplevel()
+                    if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
+        except Exception as e: print(f"Edge compilation deletion aborted: {e}")
+
+    def _adjust_selected_node_depth(self, delta):
+        """Shifts all depth/priority indexes of the highlighted profile node by +1 or -1."""
+        if not self.selected_node_id: return
+        info = self.nodes_map.get(self.selected_node_id)
+        if not info or not info["node"].stat_path: return
+        stat_path = Path(info["node"].stat_path)
+        if not stat_path.exists(): return
+        try:
+            with open(stat_path, "r", encoding="utf-8") as f: data = json.load(f)
+            depths = data.get(self.data_key, [0])
+            if not isinstance(depths, list): depths = [depths]
+            data[self.data_key] = [d + delta for d in depths]
+            with open(stat_path, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+            self.draw_graph()
+        except Exception as e: print(f"Failed depth modification: {e}")
+
+    def _remove_parent_child_edge(self, parent_id, child_id):
+        """Detaches a directory subfolder and restores it to the application's root directory."""
+        import shutil
+        old_child_path = Path(child_id)
+        new_child_path = self.map_root / old_child_path.name
+        if new_child_path.exists():
+            messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists at the root.")
+            return
+        try:
+            shutil.move(str(old_child_path), str(new_child_path))
+            
+            # Delegate tracking operations entirely to your main class global synchronization script
+            toplevel = self.winfo_toplevel()
+            if hasattr(toplevel, "sync_reciprocal_relations"):
+                toplevel.sync_reciprocal_relations(old_path_prefix=old_child_path, new_path_prefix=new_child_path)
+                toplevel.refresh_tree_silent()
+                toplevel.clear_viewer_and_tree()
+        except Exception as e: messagebox.showerror("Error", f"Failed moving node to root: {e}")
+
+    def _create_parent_child_relation(self, parent_id, child_id):
+        """Nests a node's filesystem directory inside a new parent folder node context."""
+        import shutil
+        old_child_path = Path(child_id)
+        new_child_path = Path(parent_id) / old_child_path.name
+        if new_child_path.exists():
+            messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists inside that parent.")
+            return
+        try:
+            shutil.move(str(old_child_path), str(new_child_path))
+            
+            # Delegate tracking operations entirely to your main class global synchronization script
+            toplevel = self.winfo_toplevel()
+            if hasattr(toplevel, "sync_reciprocal_relations"):
+                toplevel.sync_reciprocal_relations(old_path_prefix=old_child_path, new_path_prefix=new_child_path)
+                toplevel.refresh_tree_silent()
+                toplevel.clear_viewer_and_tree()
+        except Exception as e: messagebox.showerror("Error", f"Failed nesting parent relation: {e}")
+
+
+    def _handle_canvas_new_node_creation(self, parent_path, cx, cy):
+        title = "Add Location" if self.mode == "location" else "Add Event"
+        prompt = "Location name:" if self.mode == "location" else "Event name:"
+        fn = simpledialog.askstring(title, prompt)
+        if not fn or not fn.strip(): return
+        
+        sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+        nd = parent_path / sn; nd.mkdir(parents=True, exist_ok=True)
+        
+        icon_file = "map_icon.png" if self.mode == "location" else "event_icon.png"
+        if Path(f"./utils/{icon_file}").exists():
+            try:
+                from PIL import Image
+                img = Image.open(f"./utils/{icon_file}"); img.thumbnail((64, 64))
+                img.save(nd / f"{sn}.png", "PNG")
+            except: pass
+            
+        active_layers = sorted(list(self.visible_layers)) if self.visible_layers else [0]
+        stat_json = nd / f"{sn}.json"
+        default_data = {"name": fn, "description": "", "monsters": [], "npcs": [], "combats": [], "events" if self.mode == "location" else "locations": [], "objects": [], "connections": [], self.data_key: active_layers}
+        try:
+            with open(stat_json, "w", encoding="utf-8") as f: json.dump(default_data, f, indent=4)
+        except Exception as e: print(f"Failed to write schema JSON data payload: {e}")
+
+        current_width = max(100, self.canvas.winfo_width())
+        sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
+        zl = self.zoom_level if self.zoom_level > 0 else 1.0
+        base_x = int(round(cx / (sf * zl))); base_y = int(round(cy / (sf * zl)))
+        
+        saved_nodes = {}
+        if self.layout_path.exists():
+            try:
+                with open(self.layout_path, "r", encoding="utf-8") as f:
+                    ld = json.load(f); saved_nodes = ld.get("nodes", {})
+            except: pass
+        saved_nodes[str(nd)] = {"x": base_x, "y": base_y}
+        try:
+            with open(self.layout_path, "w", encoding="utf-8") as f: json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
+        except Exception as e: print(f"Failed to record layout node position variables: {e}")
+            
+        toplevel = self.winfo_toplevel()
+        if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
+
+    def _delete_node(self, node_id):
+        info = self.nodes_map.get(node_id)
+        if not info: return
+        if messagebox.askyesno("Confirm Delete", f"Delete permanently '{info['name']}'?"):
+            try:
+                import shutil
+                node_path = Path(node_id); target_path = node_path.resolve()
+                if node_path.is_file(): node_path.unlink()
+                else: shutil.rmtree(node_path)
+                toplevel = self.winfo_toplevel()
+                if hasattr(toplevel, "sync_reciprocal_relations"): toplevel.sync_reciprocal_relations(delete_path_prefix=target_path)
+                if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
+                if hasattr(toplevel, "clear_viewer_and_tree"): toplevel.clear_viewer_and_tree()
+                self.draw_graph()
+            except Exception as ex: messagebox.showerror("Error", f"Purge routine aborted: {ex}")
 
     def _write_current_layout_to_disk(self, current_width, dragged_id=None):
         saved_nodes = {}
@@ -3005,123 +3371,77 @@ class MapGraphRenderer(tk.Frame):
             try:
                 with open(self.layout_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    if "reference_width" in data and "nodes" in data:
-                        saved_nodes = data["nodes"]
+                    if "reference_width" in data and "nodes" in data: saved_nodes = data["nodes"]
             except: pass
-
         sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
-
+        zl = self.zoom_level if self.zoom_level > 0 else 1.0
         if dragged_id and dragged_id in self.node_centers:
             cx, cy = self.node_centers[dragged_id]
-            saved_nodes[dragged_id] = {
-                "x": int(round(cx / sf)),
-                "y": int(round(cy / sf))
-            }
+            saved_nodes[dragged_id] = {"x": int(round(cx / (sf * zl))), "y": int(round(cy / (sf * zl)))}
         else:
-            for nid, (cx, cy) in self.node_centers.items():
-                saved_nodes[nid] = {
-                    "x": int(round(cx / sf)),
-                    "y": int(round(cy / sf))
-                }
-
+            for nid, (cx, cy) in self.node_centers.items(): saved_nodes[nid] = {"x": int(round(cx / (sf * zl))), "y": int(round(cy / (sf * zl)))}
         try:
-            with open(self.layout_path, "w", encoding="utf-8") as f: 
-                json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
-        except Exception as e: 
-            print(f"Failed layout write: {e}")
+            with open(self.layout_path, "w", encoding="utf-8") as f: json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
+        except Exception as e: print(f"Failed layout write: {e}")
 
     def _collect_nodes(self, current_path: Path, nodes_map: dict, level=0):
         from models import Node
         if current_path != self.map_root:
             jsons = list(current_path.glob("*.json"))
             stat_path = jsons[0] if jsons else (current_path / f"{current_path.name}.json" if (current_path / f"{current_path.name}.json").exists() else None)
-            display_name = current_path.name; connections = []
-            depths = [0]
-            
+            display_name = current_path.name; connections = []; depths = [0]
             if stat_path and stat_path.exists():
                 try:
                     with open(stat_path, "r", encoding="utf-8") as f:
                         m_data = json.load(f)
                         display_name = m_data.get("name", display_name)
                         connections = [(c.get("target"), c.get("description", "")) for c in m_data.get("connections", []) if c.get("target")]
-                        
-                        # Dynamic parameter query checks key based on active configuration mode
                         depths = m_data.get(self.data_key, [0])
                         if not isinstance(depths, list): depths = [depths]
                 except: pass
-                
-            nodes_map[str(current_path)] = {
-                "node": Node(name=display_name, path=current_path, is_entity=bool(jsons), level=level, stat_path=stat_path), 
-                "name": display_name, 
-                "connections": connections,
-                "depths": depths
-            }
+            nodes_map[str(current_path)] = {"node": Node(name=display_name, path=current_path, is_entity=bool(jsons), level=level, stat_path=stat_path), "name": display_name, "connections": connections, "depths": depths}
         if current_path.is_dir():
             for sub_p in current_path.iterdir():
                 if sub_p.is_dir(): self._collect_nodes(sub_p, nodes_map, level + 1)
 
-    def _on_node_hover_enter(self, event):
-        self._handle_node_hover(event)
-
-    def _on_node_hover_motion(self, event):
-        self._handle_node_hover(event)
-
+    def _on_node_hover_enter(self, event): self._handle_node_hover(event)
+    def _on_node_hover_motion(self, event): self._handle_node_hover(event)
     def _on_node_hover_leave(self, event):
         if hasattr(self, "_hover_popup") and self._hover_popup:
             try: self._hover_popup.destroy()
             except: pass
-            self._hover_popup = None
-            self._hover_target = None
+            self._hover_popup, self._hover_target = None, None
 
     def _handle_node_hover(self, event):
-        if self._drag_node_id or self._is_panning:  
+        if self._drag_node_id or self._is_panning or self.current_mode != "select":  
             self._on_node_hover_leave(None)
             return
-
         items = self.canvas.find_withtag("current")
         if not items:
             self._on_node_hover_leave(None)
             return
-            
-        item = items[0]
-        tags = self.canvas.gettags(item)
-        node_id = None
+        item = items[0]; tags = self.canvas.gettags(item); node_id = None
         for t in tags:
-            if t.startswith("path:"):
-                node_id = t.split("path:", 1)[1]
-                break
+            if t.startswith("path:"): node_id = t.split("path:", 1)[1]; break
         if not node_id:
             for t in tags:
                 if t not in ["link", "current", "edge", "node", "drag_handle"] and not t.startswith("group:"):
-                    node_id = t
-                    break
+                    node_id = t; break
         if not node_id:
             self._on_node_hover_leave(None)
             return
-
-        scr_w = self.winfo_screenwidth()
-        scr_h = self.winfo_screenheight()
-        popup_w = int(scr_w * 2 / 5)
-        popup_h = int(scr_h * 2 / 5)
-
-        mid_x = scr_w / 2
-        mid_y = scr_h / 2
-        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
-        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
+        scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        popup_w, popup_h = int(scr_w * 2 / 5), int(scr_h * 2 / 5)
+        x_pos = event.x_root + 15 if event.x_root < (scr_w / 2) else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < (scr_h / 2) else event.y_root - popup_h - 15
 
         if hasattr(self, "_hover_target") and self._hover_target == node_id:
-            if hasattr(self, "_hover_popup") and self._hover_popup:
-                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
+            if hasattr(self, "_hover_popup") and self._hover_popup: self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
-
-        self._on_node_hover_leave(None)
-        self._hover_target = node_id
+        self._on_node_hover_leave(None); self._hover_target = node_id
         
-        popup = tk.Toplevel(self)
-        popup.is_hover_popup = True  
-        popup.wm_overrideredirect(True)
-        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
-        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
+        popup = tk.Toplevel(self); popup.is_hover_popup = True; popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID); popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
 
         toplevel = self.winfo_toplevel()
@@ -3129,13 +3449,264 @@ class MapGraphRenderer(tk.Frame):
             data, dtype = toplevel.resolve_hover_data("PATH_TAG", node_id)
             if data:
                 from stat_renderer import StatBlockRenderer
-                mini_viewer = StatBlockRenderer(popup)
-                mini_viewer.pack(fill=tk.BOTH, expand=True)
-                mini_viewer.clear_overlays()
-                mini_viewer.text.adjust_height = lambda: None
-                mini_viewer.text.configure(height=1)
+                mini_viewer = StatBlockRenderer(popup); mini_viewer.pack(fill=tk.BOTH, expand=True); mini_viewer.clear_overlays()
+                mini_viewer.text.adjust_height = lambda: None; mini_viewer.text.configure(height=1)
                 if dtype == "location": mini_viewer.render_location(data)
                 elif dtype == "event": mini_viewer.render_event(data)
                 popup.target_text_widget = mini_viewer.text
+            else: tk.Label(popup, text="No detailed tracker sheet for this node.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+
+    def open_terrain_settings_panel(self):
+        """Displays the popup terrain window layer settings builder configurations frame panel."""
+        def on_settings_applied(new_size, new_color):
+            self.terrain_size = new_size
+            self.terrain_color = new_color
+            self.draw_graph()
+            
+        TerrainSettingsDialog(self, self.terrain_size, self.terrain_color, on_settings_applied)
+
+    def _fluid_enter_terrain_brush(self):
+        """Toggles the tool instantly when holding down Shift."""
+        if self.current_mode != "terrain":
+            focused = self.winfo_toplevel().focus_get()
+            if focused and isinstance(focused, (tk.Text, tk.Entry)): return 
+            self._cached_pre_shift_mode = self.current_mode
+            self.current_mode = "terrain"
+            self.canvas.config(cursor="crosshair")
+            self.draw_graph()
+
+    def _fluid_exit_terrain_brush(self):
+        """Compresses changes and redraws safely when Shift is released."""
+        if self.current_mode == "terrain":
+            self.current_mode = self._cached_pre_shift_mode
+            self.canvas.config(cursor="")
+            
+            # Compress the currently modified active layer
+            active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
+            self._compress_terrain_layer(active_layer)
+            self.save_terrain_to_disk()
+            
+            self.draw_graph()
+
+    def _render_terrain_image(self, sf, zl):
+        """Compiles the sparse matrix data frame into a single continuous high-performance backdrop bitmap."""
+        self.canvas.delete("background_texture")
+        active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
+        
+        # Isolate coordinates matching our active target layer
+        layer_prefix = f"{active_layer}:"
+        active_cells = {}
+        for k, v in self.working_grid.items():
+            if k.startswith(layer_prefix):
+                coord_part = k.split(":", 1)[1]
+                cx, cy = map(int, coord_part.split(","))
+                active_cells[(cx, cy)] = v
+        
+        if not active_cells:
+            self._terrain_image = None
+            self._img_origin_x = 0
+            self._img_origin_y = 0
+            return
+
+        # Calculate a tight bounding box around the painted coordinates
+        xs = [c[0] for c in active_cells.keys()]
+        ys = [c[1] for c in active_cells.keys()]
+        min_cx, max_cx = min(xs), max(xs)
+        min_cy, max_cy = min(ys), max(ys)
+
+        # Pad bounds by 2 grid cells to prevent rounding edge clips during high zoom scales
+        min_cx -= 2; min_cy -= 2
+        max_cx += 2; max_cy += 2
+
+        # Convert unscaled grid cells into absolute viewport canvas pixel coordinates
+        self._img_origin_x = int(min_cx * 10 * sf * zl)
+        self._img_origin_y = int(min_cy * 10 * sf * zl)
+        max_vx = int((max_cx + 1) * 10 * sf * zl)
+        max_vy = int((max_cy + 1) * 10 * sf * zl)
+
+        img_w = max_vx - self._img_origin_x
+        img_h = max_vy - self._img_origin_y
+        if img_w <= 0 or img_h <= 0: return
+
+        # Allocate a single continuous Tk PhotoImage memory buffer
+        self._terrain_image = tk.PhotoImage(width=img_w, height=img_h)
+
+        # Performance Blit: Push pixels into C-memory structures via bounding box region fills
+        for (cx, cy), color in active_cells.items():
+            x1 = int(cx * 10 * sf * zl) - self._img_origin_x
+            y1 = int(cy * 10 * sf * zl) - self._img_origin_y
+            x2 = int((cx + 1) * 10 * sf * zl) - self._img_origin_x
+            y2 = int((cy + 1) * 10 * sf * zl) - self._img_origin_y
+            
+            if x2 > x1 and y2 > y1:
+                self._terrain_image.put(color, to=(x1, y1, x2, y2))
+
+        # Mount the single composite background item directly onto the canvas view frame
+        self.canvas.create_image(self._img_origin_x, self._img_origin_y, image=self._terrain_image, anchor="nw", tags="background_texture")
+        self.canvas.tag_lower("background_texture")
+
+    def _paint_brush_grid_cells(self, x_pos, y_pos):
+        """Maps canvas screen positions onto grid keys and streams pixels directly into memory."""
+        current_width = max(100, self.canvas.winfo_width())
+        sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
+        zl = self.zoom_level if self.zoom_level > 0 else 1.0
+
+        cx = self.canvas.canvasx(x_pos)
+        cy = self.canvas.canvasy(y_pos)
+        unscaled_cx = cx / (sf * zl)
+        unscaled_cy = cy / (sf * zl)
+
+        block_size = self.terrain_size
+        bx = int(unscaled_cx // block_size) * block_size
+        by = int(unscaled_cy // block_size) * block_size
+
+        active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
+        modified = False
+
+        for x in range(bx, bx + block_size, 10):
+            for y in range(by, by + block_size, 10):
+                grid_key = f"{active_layer}:{x//10},{y//10}"
+                
+                if self.terrain_color == "#ffffff": # Eraser Mode
+                    if grid_key in self.working_grid:
+                        del self.working_grid[grid_key]
+                        modified = True
+                elif self.working_grid.get(grid_key) != self.terrain_color:
+                    self.working_grid[grid_key] = self.terrain_color
+                    modified = True
+
+        if modified:
+            vx1 = int(bx * sf * zl)
+            vy1 = int(by * sf * zl)
+            vx2 = int((bx + block_size) * sf * zl)
+            vy2 = int((by + block_size) * sf * zl)
+            
+            # OPTIMIZATION: If the stroke is inside our pre-allocated bitmap, blit to it instantly with 0% CPU churn!
+            if (hasattr(self, "_terrain_image") and self._terrain_image and 
+                self._img_origin_x <= vx1 and self._img_origin_y <= vy1 and 
+                (vx2 - self._img_origin_x) <= self._terrain_image.width() and 
+                (vy2 - self._img_origin_y) <= self._terrain_image.height()):
+                
+                lx1 = vx1 - self._img_origin_x
+                ly1 = vy1 - self._img_origin_y
+                lx2 = vx2 - self._img_origin_x
+                ly2 = vy2 - self._img_origin_y
+                
+                # Match canvas background color when erasing to simulate alpha transparency natively
+                fill_color = "#fdf1dc" if self.terrain_color == "#ffffff" else self.terrain_color
+                self._terrain_image.put(fill_color, to=(lx1, ly1, lx2, ly2))
             else:
-                tk.Label(popup, text="No detailed tracker sheet for this node.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+                # Fallback: Smoothly grow the bounding frame size if drawing outside current margins
+                self._render_terrain_image(sf, zl)
+                
+            # Keep line grids and nodes firmly on top of the newly blitted pixels
+            self.canvas.tag_raise("assistance_line")
+            self.canvas.tag_raise("node")
+            self.canvas.tag_raise("link")
+
+    def _load_terrain_data(self):
+        """Loads compressed rectangle structures from disk and converts them into an active working grid."""
+        self.working_grid = {}  # Active uncompressed painting cache: {"x,y": "color"}
+        self.compressed_rects = {}  # Optimization render cache: {"layer_id": [(x, y, w, h, color)]}
+        
+        if self.terrain_path.exists():
+            try:
+                with open(self.terrain_path, "r", encoding="utf-8") as f:
+                    self.compressed_rects = json.load(f)
+                    
+                # Hydrate the active working dictionary from the compressed file payload
+                for layer, rect_list in self.compressed_rects.items():
+                    for r in rect_list:
+                        rx, ry, rw, rh, color = r["x"], r["y"], r["w"], r["h"], r["color"]
+                        for x in range(rx, rx + rw):
+                            for y in range(ry, ry + rh):
+                                # Working grid keys are indexed by the baseline 10px intervals
+                                self.working_grid[f"{layer}:{x},{y}"] = color
+            except Exception as e:
+                print(f"Failed to parse terrain database: {e}")
+                self.working_grid, self.compressed_rects = {}, {}
+
+    def _compress_terrain_layer(self, layer_str):
+        """Greedy 2D run-length optimization algorithm to decompose cells into minimal rectangles."""
+        layer_prefix = f"{layer_str}:"
+        cells_by_color = {}
+        
+        # Group active uncompressed grid entries by their hex color code
+        for key, color in self.working_grid.items():
+            if key.startswith(layer_prefix):
+                coord_part = key.split(":", 1)[1]
+                cx, cy = map(int, coord_part.split(","))
+                cells_by_color.setdefault(color, []).append((cx, cy))
+                
+        layer_rectangles = []
+        
+        for color, coords in cells_by_color.items():
+            # Step 1: Group cells horizontally by row (Y coordinate)
+            by_y = {}
+            for cx, cy in coords:
+                by_y.setdefault(cy, []).append(cx)
+                
+            # Compile consecutive horizontal blocks into 1D segments: (start_x, end_x)
+            spans_by_y = {}
+            for cy, x_list in by_y.items():
+                x_list.sort()
+                spans = []
+                if not x_list: continue
+                start_x = x_list[0]
+                prev_x = x_list[0]
+                for cx in x_list[1:]:
+                    if cx == prev_x + 1:
+                        prev_x = cx
+                    else:
+                        spans.append((start_x, prev_x))
+                        start_x = cx
+                        prev_x = cx
+                spans.append((start_x, prev_x))
+                spans_by_y[cy] = spans
+
+            # Step 2: Merge matching horizontal spans vertically across rows
+            consumed_spans = set()
+            sorted_ys = sorted(spans_by_y.keys())
+            
+            for cy in sorted_ys:
+                for start_x, end_x in spans_by_y[cy]:
+                    if (cy, start_x, end_x) in consumed_spans:
+                        continue
+                        
+                    h = 1
+                    next_y = cy + 1
+                    # Look directly down for identical horizontal blocks on sequential rows
+                    while next_y in spans_by_y and (start_x, end_x) in spans_by_y[next_y]:
+                        if (next_y, start_x, end_x) not in consumed_spans:
+                            h += 1
+                            next_y += 1
+                        else:
+                            break
+                            
+                    # Mark all merged rows as consumed
+                    for ry in range(cy, cy + h):
+                        consumed_spans.add((ry, start_x, end_x))
+                        
+                    w = end_x - start_x + 1
+                    layer_rectangles.append({"x": start_x, "y": cy, "w": w, "h": h, "color": color})
+                    
+        # Update our centralized storage database payload matrix
+        self.compressed_rects[layer_str] = layer_rectangles
+
+    def save_terrain_to_disk(self):
+        """Runs optimization loops across all active layers and safely commits them to disk."""
+        # Find which layers have data registered inside the active working grid memory array
+        active_layers = set(key.split(":", 1)[0] for key in self.working_grid.keys())
+        
+        # Ensure any layer left completely blank is wiped cleanly from the save files
+        self.compressed_rects = {k: v for k, v in self.compressed_rects.items() if k in active_layers}
+        
+        # Compress layers dynamically before serialization
+        for layer in active_layers:
+            self._compress_terrain_layer(layer)
+            
+        try:
+            with open(self.terrain_path, "w", encoding="utf-8") as f:
+                json.dump(self.compressed_rects, f, indent=4)
+        except Exception as e:
+            print(f"Failed landscape structural data dump serialization: {e}")

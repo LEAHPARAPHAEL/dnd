@@ -66,37 +66,6 @@
         ]
     },
     {
-        "name": "abrac",
-        "source": "Custom",
-        "level": 1,
-        "school": "V",
-        "time": [
-            {
-                "number": 1,
-                "unit": "action"
-            }
-        ],
-        "range": {
-            "type": "point",
-            "distance": {
-                "type": "feet",
-                "amount": 60
-            }
-        },
-        "components": {
-            "v": true,
-            "s": true
-        },
-        "duration": [
-            {
-                "type": "instant"
-            }
-        ],
-        "entries": [
-            "Describe spell."
-        ]
-    },
-    {
         "name": "Absorb Elements",
         "source": "XGE",
         "page": 150,

@@ -1,53 +1,13 @@
 {
     "reference_width": 1000,
     "nodes": {
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\a": {
-            "x": 328,
-            "y": 300
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\a": {
+            "x": 306,
+            "y": 214
         },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\b": {
-            "x": 582,
-            "y": 236
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\c": {
-            "x": 485,
-            "y": 548
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\a\\aa": {
-            "x": 348,
-            "y": 137
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\a\\aaa": {
-            "x": 355,
-            "y": 216
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
-            "x": 150,
-            "y": 119
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\aa": {
-            "x": 673,
-            "y": 399
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\b\\bb": {
-            "x": 671,
-            "y": 431
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\a\\ab": {
-            "x": 29,
-            "y": 220
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
-            "x": 150,
-            "y": 119
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\aa": {
-            "x": 586,
-            "y": 539
-        },
-        "C:\\Users\\raph\\Documents\\GitHub\\dnd\\data\\map\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ab": {
-            "x": 673,
-            "y": 399
+        "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\b": {
+            "x": 492,
+            "y": 359
         }
     }
 }

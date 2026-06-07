@@ -67,6 +67,7 @@ class DnDStatManager(tk.Tk):
         self.bind_all("<MouseWheel>", self._global_mouse_wheel)
         self.bind_all("<Button-4>", self._global_mouse_wheel)
         self.bind_all("<Button-5>", self._global_mouse_wheel)
+        self.bind_all("<Key>", self._on_global_key_shortcut)
 
     def _global_mouse_wheel(self, event):
         try:
@@ -107,6 +108,11 @@ class DnDStatManager(tk.Tk):
                     v_top, v_bottom = cur.tree.yview()
                     if v_top > 0.0 or v_bottom < 1.0: cur.tree.yview_scroll(units, "units")
                     return
+                if isinstance(cur, tk.Toplevel) and hasattr(cur, 'canvas'):
+                    try:
+                        cur.canvas.yview_scroll(units, "units")
+                        return "break"
+                    except: pass
                 if cur == self.right_frame:
                     if self.stat_viewer.winfo_ismapped():
                         if self.stat_viewer.edit_container.winfo_ismapped():
@@ -125,16 +131,99 @@ class DnDStatManager(tk.Tk):
                         v_top, v_bottom = self.spell_tree.yview()
                         if v_top > 0.0 or v_bottom < 1.0: self.spell_tree.yview_scroll(units, "units")
                     elif hasattr(self, 'map_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
-                        v_top, v_bottom = self.map_graph_viewer.canvas.yview()
-                        if v_top > 0.0 or v_bottom < 1.0: self.map_graph_viewer.canvas.yview_scroll(units, "units")
-                    elif hasattr(self, 'events_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
-                        v_top, v_bottom = self.events_graph_viewer.canvas.yview()
-                        if v_top > 0.0 or v_bottom < 1.0: self.events_graph_viewer.canvas.yview_scroll(units, "units")
+                        self.map_graph_viewer.adjust_zoom(units)
+                    elif hasattr(self, 'events_graph_viewer') and self.events_graph_viewer.winfo_ismapped():
+                        self.events_graph_viewer.adjust_zoom(units)
                     return
                 parent_id = cur.winfo_parent()
                 if not parent_id: break
                 cur = cur.nametowidget(parent_id)
         except: pass
+
+    def _on_global_key_shortcut(self, event):
+        """Processes global hotkey shortcuts across the entire app window layout."""
+        try:
+            if "shift" in event.keysym.lower() or event.state & 0x0001: 
+                return
+            # 1. Focus guard rail: Escape early if typing inside an active input text/entry frame
+            focused = self.focus_get()
+            if focused and isinstance(focused, (tk.Text, tk.Entry)):
+                return
+
+            key = event.keysym.lower()
+            
+            # Intercept and process local canvas tool commands first
+            if hasattr(self, 'map_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
+                if self.map_graph_viewer.handle_shortcut(key):
+                    return "break"
+            if hasattr(self, 'events_graph_viewer') and self.events_graph_viewer.winfo_ismapped():
+                if self.events_graph_viewer.handle_shortcut(key):
+                    return "break"
+
+            # 2. Page Navigation Routing Rules
+            if key == 'm':
+                self.open_page(Node(name="Campaign Map", path=self.map_dir, is_entity=False, level=0), view_type="root_folder")
+                return "break"
+            elif key == 'e':
+                self.open_page(Node(name="Events", path=self.events_dir, is_entity=False, level=0), view_type="root_folder")
+                return "break"
+            elif key == 'b':
+                self.open_page(Node(name="Monsters", path=self.monsters_dir, is_entity=False, level=0), view_type="root_folder")
+                return "break"
+            elif key == 'n':
+                self.open_page(Node(name="NPCs", path=self.npcs_dir, is_entity=False, level=0), view_type="root_folder")
+                return "break"
+            elif key == 'c':
+                self.open_page(Node(name="Combats", path=self.combats_dir, is_entity=False, level=0), view_type="root_folder")
+                return "break"
+                
+            # 3. Structural Back Action Override Trigger
+            elif key == 'escape':
+                self.navigate_back()
+                return "break"
+                
+            # 4. Sheet Page Deletion Action
+            elif key == 'delete':
+                self._delete_active_page_sheet()
+                return "break"
+        except: pass
+
+    def _delete_active_page_sheet(self):
+        """Permanently unlinks and purges the active page file from memory and disk."""
+        if not self.current_state or not self.current_state.node:
+            return
+            
+        state = self.current_state
+        node = state.node
+        
+        # Safeguard protection to block accidental deletion of core primary indexing root folders
+        protected_roots = ["Map", "Events", "Objects", "Spells", "Monsters", "NPCs", "Combats", "Campaign Map"]
+        
+        # FIXED: Changed node.view_type to state.view_type
+        if node.name in protected_roots or state.view_type == "root_folder":
+            return
+
+        if messagebox.askyesno("Confirm Delete", f"Delete permanently '{node.name}'?"):
+            try:
+                import shutil
+                target_path = node.path.resolve()
+                if node.path.is_file():
+                    if node.path.parent == self.spells_dir:
+                        try:
+                            # FIXED: Changed node.stat_path to state.stat_path for stable lookup
+                            self.spells_index = [s for s in self.spells_index if s["name"].lower() != json.load(open(state.stat_path, "r", encoding="utf-8")).get("name", "").lower()]
+                            json.dump(self.spells_index, open("spells.json", "w", encoding="utf-8"), indent=4)
+                            self.stat_viewer.set_spells_index(self.spells_index)
+                        except: pass
+                    node.path.unlink()
+                else:
+                    shutil.rmtree(node.path)
+                    
+                self.sync_reciprocal_relations(delete_path_prefix=target_path)
+                self.refresh_tree_silent()
+                self.clear_viewer_and_tree()
+            except Exception as ex:
+                messagebox.showerror("Error", f"Failed to delete sheet file: {ex}")
 
     def _get_open_paths(self, nodes):
         return {str(n.path) for n in nodes if n.is_open}.union(*(self._get_open_paths(n.children) for n in nodes))
@@ -443,15 +532,15 @@ class DnDStatManager(tk.Tk):
         elif state.view_type == "root_folder" and state.node.path.resolve() == self.map_dir.resolve():
             self.map_graph_viewer.pack(fill=tk.BOTH, expand=True)
             self.map_graph_viewer.draw_graph()
-            return
         
         elif state.view_type == "root_folder" and state.node.path.resolve() == self.events_dir.resolve():
             self.events_graph_viewer.pack(fill=tk.BOTH, expand=True)
             self.events_graph_viewer.draw_graph()
-            return
         
         else:
             self.placeholder_frame.pack(fill=tk.BOTH, expand=True); self.placeholder_lbl.config(text=f"Location Directory Zone: '{state.node.name}'\nPath: {state.node.path}")
+        
+        self.after(50, self.focus_set)
 
     # chips trackers
     def _add_qblock_generic(self, storage, val, render_cb, query_cb): storage.append(val); render_cb(); query_cb()
@@ -817,7 +906,12 @@ class DnDStatManager(tk.Tk):
             try: Image.open("./utils/map_icon.png").thumbnail((64,64)); Image.open("./utils/map_icon.png").save(nd / f"{sn}.png", "PNG")
             except: pass
         self._set_node_open(p_path, True); self.refresh_tree_silent()
-        self.open_page(Node(name=fn, path=nd, is_entity=False, level=len(nd.relative_to(self.map_dir).parts)), view_type="location", is_reference_click=False)
+        
+        # FIX: If the map graph layout workspace is open, refresh the canvas views instead of forcing a page jump
+        if hasattr(self, 'map_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
+            self.map_graph_viewer.draw_graph()
+        else:
+            self.open_page(Node(name=fn, path=nd, is_entity=False, level=len(nd.relative_to(self.map_dir).parts)), view_type="location", is_reference_click=False)
 
     def refresh_tree(self): self.refresh_tree_silent()
         
@@ -1001,10 +1095,15 @@ class DnDStatManager(tk.Tk):
         sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
         nd = p_path / sn; nd.mkdir(parents=True, exist_ok=True)
         if Path("./utils/event_icon.png").exists():
-            try: shutil.copy(Path("./utils/event_icon.png"), nd / f"{sn}.png")
+            try: Image.open("./utils/event_icon.png").thumbnail((64,64)); Image.open("./utils/event_icon.png").save(nd / f"{sn}.png", "PNG")
             except: pass
         self._set_node_open(p_path, True); self.refresh_tree_silent()
-        self.open_page(Node(name=fn, path=nd, is_entity=False, level=len(nd.relative_to(self.events_dir).parts)), view_type="event", is_reference_click=False)
+        
+        # FIX: If the events graph layout workspace is open, refresh the canvas views instead of forcing a page jump
+        if hasattr(self, 'events_graph_viewer') and self.events_graph_viewer.winfo_ismapped():
+            self.events_graph_viewer.draw_graph()
+        else:
+            self.open_page(Node(name=fn, path=nd, is_entity=False, level=len(nd.relative_to(self.events_dir).parts)), view_type="event", is_reference_click=False)
 
     def on_location_link_clicked(self, name, category):
         if self.stat_viewer.edit_container.winfo_ismapped():
@@ -1237,53 +1336,98 @@ class DnDStatManager(tk.Tk):
 
     def _recursive_delete_refs(self, data, delete_str):
         modified = False
+        delete_match = delete_str.replace('\\', '/').lower()
+        
         if isinstance(data, dict):
+            new_dict = {}
             for k, v in list(data.items()):
-                if isinstance(v, str) and v.lower().startswith(delete_str):
-                    data[k] = ""; modified = True
+                k_norm = k.replace('\\', '/').lower()
+                # 1. Clear keys from graph_layout.json if the path matches the deleted prefix
+                if k_norm == delete_match or k_norm.startswith(delete_match + "/"):
+                    modified = True
+                    continue  # Purges the entry entirely from the dictionary context
+                
+                if isinstance(v, str):
+                    v_norm = v.replace('\\', '/').lower()
+                    if v_norm == delete_match or v_norm.startswith(delete_match + "/"):
+                        v = ""
+                        modified = True
                 elif isinstance(v, list):
                     new_list = []
                     for item in v:
-                        if isinstance(item, str) and item.lower().startswith(delete_str):
-                            modified = True
+                        if isinstance(item, str):
+                            item_norm = item.replace('\\', '/').lower()
+                            if item_norm == delete_match or item_norm.startswith(delete_match + "/"):
+                                modified = True
+                                continue
                         elif isinstance(item, dict):
-                            item_path = item.get("path", item.get("target", item.get("name", "")))
-                            if isinstance(item_path, dict): item_path = item_path.get("path", item_path.get("target", ""))
-                            if isinstance(item_path, str) and item_path.lower().startswith(delete_str): modified = True
-                            else:
-                                civ = self._recursive_delete_refs(item, delete_str)
-                                if civ: modified = True
-                                new_list.append(item)
-                        else: new_list.append(item)
-                    data[k] = new_list
+                            if self._recursive_delete_refs(item, delete_str):
+                                modified = True
+                        new_list.append(item)
+                    v = new_list
                 elif isinstance(v, dict):
-                    if self._recursive_delete_refs(v, delete_str): modified = True
+                    if self._recursive_delete_refs(v, delete_str):
+                        modified = True
+                new_dict[k] = v
+                
+            # Mutate dictionary in place to maintain memory reference trees intact
+            data.clear()
+            data.update(new_dict)
+            
         return modified
 
     def _recursive_update_refs(self, data, old_str, new_str):
         modified = False
+        old_match = old_str.replace('\\', '/').lower()
+        
         if isinstance(data, dict):
-            for k in ["path", "target"]:
-                if k in data and isinstance(data[k], str) and data[k].lower().startswith(old_str):
-                    data[k] = new_str + data[k][len(old_str):]
+            new_dict = {}
+            for k, v in list(data.items()):
+                new_k = k
+                k_norm = k.replace('\\', '/').lower()
+                
+                # 1. Rename dictionary keys (fixes graph_layout.json ghost nodes automatically)
+                if k_norm == old_match:
+                    new_k = new_str
                     modified = True
-                    if "name" in data:
-                        p = Path(data[k])
-                        data["name"] = p.stem if p.is_file() else p.name
-
-            for k, v in data.items():
+                elif k_norm.startswith(old_match + "/"):
+                    new_k = new_str + k[len(old_str):]
+                    modified = True
+                
                 if isinstance(v, str):
-                    if k not in ["path", "target"] and v.lower().startswith(old_str):
-                        data[k] = new_str + v[len(old_str):]
+                    v_norm = v.replace('\\', '/').lower()
+                    if v_norm == old_match:
+                        v = new_str
                         modified = True
+                    elif v_norm.startswith(old_match + "/"):
+                        v = new_str + v[len(old_str):]
+                        modified = True
+                        
+                    # Maintain the automatic display name matching logic for references
+                    if new_k in ["path", "target"] and modified:
+                        p = Path(v)
+                        data["name"] = p.stem if p.is_file() else p.name
                 elif isinstance(v, list):
                     for i in range(len(v)):
-                        if isinstance(v[i], str) and v[i].lower().startswith(old_str):
-                            v[i] = new_str + v[i][len(old_str):]; modified = True
+                        if isinstance(v[i], str):
+                            vi_norm = v[i].replace('\\', '/').lower()
+                            if vi_norm == old_match:
+                                v[i] = new_str; modified = True
+                            elif vi_norm.startswith(old_match + "/"):
+                                v[i] = new_str + v[i][len(old_str):]; modified = True
                         elif isinstance(v[i], dict):
-                            if self._recursive_update_refs(v[i], old_str, new_str): modified = True
+                            if self._recursive_update_refs(v[i], old_str, new_str):
+                                modified = True
                 elif isinstance(v, dict):
-                    if self._recursive_update_refs(v, old_str, new_str): modified = True
+                    if self._recursive_update_refs(v, old_str, new_str):
+                        modified = True
+                        
+                new_dict[new_k] = v
+                
+            # Mutate dictionary in place to maintain memory reference trees intact
+            data.clear()
+            data.update(new_dict)
+            
         return modified
     
     def create_new_object(self):

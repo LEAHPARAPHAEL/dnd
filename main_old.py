@@ -78,6 +78,8 @@ class DnDStatManager(tk.Tk):
                 active_popup = self.combat_viewer._hover_popup
             elif hasattr(self, 'map_graph_viewer') and getattr(self.map_graph_viewer, '_hover_popup', None):
                 active_popup = self.map_graph_viewer._hover_popup
+            elif hasattr(self, 'events_graph_viewer') and getattr(self.events_graph_viewer, '_hover_popup', None):
+                active_popup = self.events_graph_viewer._hover_popup
 
             # If a hover popup exists, completely hijack the scroll signal and route it to its text panel
             if active_popup and active_popup.winfo_exists():
@@ -125,6 +127,9 @@ class DnDStatManager(tk.Tk):
                     elif hasattr(self, 'map_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
                         v_top, v_bottom = self.map_graph_viewer.canvas.yview()
                         if v_top > 0.0 or v_bottom < 1.0: self.map_graph_viewer.canvas.yview_scroll(units, "units")
+                    elif hasattr(self, 'events_graph_viewer') and self.map_graph_viewer.winfo_ismapped():
+                        v_top, v_bottom = self.events_graph_viewer.canvas.yview()
+                        if v_top > 0.0 or v_bottom < 1.0: self.events_graph_viewer.canvas.yview_scroll(units, "units")
                     return
                 parent_id = cur.winfo_parent()
                 if not parent_id: break
@@ -192,8 +197,8 @@ class DnDStatManager(tk.Tk):
         self.stat_viewer.set_spell_callback(self.on_spell_clicked); self.stat_viewer.set_spells_index(self.spells_index); self.stat_viewer.set_location_link_callback(self.on_location_link_clicked)
         self.stat_viewer._hover_data_resolver = self.resolve_hover_data
         self.combat_viewer = CombatRenderer(self.view_pane, open_statblock_cb=self._combat_open_statblock, save_cb=self.save_combat_edits, add_bestiary_cb=self._combat_add_bestiary, add_camp_mon_cb=self._combat_add_camp_mon, add_camp_npc_cb=self._combat_add_camp_npc, cancel_cb=self.navigate_back)
-        self.map_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.map_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="location"))
-
+        self.map_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.map_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="location"), mode = 'location')
+        self.events_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.events_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="event"), mode = 'event')
         # Monsters Indexes Dashboard
         self.search_frame = tk.Frame(self.view_pane, bg="#fdf1dc")
         tk.Label(self.search_frame, text="Monster Database", font=("Georgia", 16, "bold"), bg="#fdf1dc", fg="#7a200d").pack(pady=10)
@@ -371,7 +376,7 @@ class DnDStatManager(tk.Tk):
             self.current_state = self.current_state.prev; self._show_current_state_view()
 
     def _show_current_state_view(self):
-        for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame, self.map_graph_viewer]: panel.pack_forget()
+        for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame, self.map_graph_viewer, self.events_graph_viewer]: panel.pack_forget()
         if not self.current_state: return
         if self.current_state.prev is None: self.back_btn.pack_forget()
         else: self.back_btn.pack(side=tk.LEFT, padx=10, pady=2)
@@ -438,6 +443,11 @@ class DnDStatManager(tk.Tk):
         elif state.view_type == "root_folder" and state.node.path.resolve() == self.map_dir.resolve():
             self.map_graph_viewer.pack(fill=tk.BOTH, expand=True)
             self.map_graph_viewer.draw_graph()
+            return
+        
+        elif state.view_type == "root_folder" and state.node.path.resolve() == self.events_dir.resolve():
+            self.events_graph_viewer.pack(fill=tk.BOTH, expand=True)
+            self.events_graph_viewer.draw_graph()
             return
         
         else:

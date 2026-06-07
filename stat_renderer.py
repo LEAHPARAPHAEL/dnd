@@ -4,7 +4,7 @@ import re
 import json
 import copy
 import utils
-from dialogs import SpellSearchDialog
+from dialogs import SpellSearchDialog, DepthsSelectionDialog
 from pathlib import Path
 
 # ==================== CONDITIONS DATABASE ====================
@@ -526,6 +526,17 @@ class StatBlockRenderer(tk.Frame):
         self.text.insert(tk.END, data.get("name", "Unknown Profile") + "\n", "title")
         self.insert_divider()
         
+        if "priority" in data:
+            p_list = data.get("priority", [0])
+            self.text.insert(tk.END, "Priority: ", "bold")
+            self.text.insert(tk.END, ", ".join(map(str, sorted(p_list))) + "\n\n", "body")
+            self.insert_divider()
+        elif "depths" in data:
+            depths_list = data.get("depths", [0])
+            self.text.insert(tk.END, "Depths: ", "bold")
+            self.text.insert(tk.END, ", ".join(map(str, sorted(depths_list))) + "\n\n", "body")
+            self.insert_divider()
+
         desc = data.get("description", "")
         if desc: 
             self.text.insert(tk.END, desc + "\n\n", "body")
@@ -583,12 +594,9 @@ class StatBlockRenderer(tk.Frame):
             self.edit_data["name"] = name_entry.get().strip(); self.edit_data["description"] = desc_text.get("1.0", "end-1c").strip()
             
             if is_location:
-                try:
-                    d_str = depths_entry.get().strip()
-                    d_list = [int(x.strip()) for x in d_str.split(",") if x.strip().replace('-', '', 1).isdigit()]
-                    self.edit_data["depths"] = d_list if d_list else [0]
-                except:
-                    self.edit_data["depths"] = [0]
+                self.edit_data["depths"] = self.current_location_depths if getattr(self, 'current_location_depths', None) else [0]
+            else:
+                self.edit_data["priority"] = self.current_event_priorities if getattr(self, 'current_event_priorities', None) else [0]
             
             for k in keys[:-1]: self.edit_data[k] = [m["name"] for m in storage[k]]
             self.edit_data["connections"] = [{"target": c["target"], "description": c["desc_entry"].get().strip()} for c in storage["connections"]]
@@ -607,11 +615,31 @@ class StatBlockRenderer(tk.Frame):
         desc_text.insert("1.0", self.edit_data.get("description", "")); desc_text.grid(row=1, column=1, sticky="w", padx=5, pady=2)
 
         if is_location:
-            tk.Label(basic_frame, text="Depths (comma-separated):", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=2, column=0, sticky="e", padx=5, pady=2)
-            depths_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-            cur_depths = self.edit_data.get("depths", [0])
-            depths_entry.insert(0, ", ".join(map(str, cur_depths)))
-            depths_entry.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+            self.current_location_depths = self.edit_data.get("depths", [0])
+            if not self.current_location_depths: self.current_location_depths = [0]
+            tk.Label(basic_frame, text="Depths:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=2, column=0, sticky="e", padx=5, pady=2)
+            depths_panel = tk.Frame(basic_frame, bg="#fdf1dc")
+            depths_panel.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+            depths_lbl = tk.Label(depths_panel, text=", ".join(map(str, self.current_location_depths)), font=self.body_font, bg="#fae6c5", fg="black", bd=1, relief=tk.SOLID, padx=10, pady=2)
+            depths_lbl.pack(side=tk.LEFT, padx=(0, 10))
+            def on_dialog_depths_applied(new_depths):
+                self.current_location_depths = new_depths
+                depths_lbl.config(text=", ".join(map(str, new_depths)))
+            btn_depths = tk.Button(depths_panel, text="Select Depths", font=("Arial", 9, "bold"), bg="#d9ad6c", command=lambda: DepthsSelectionDialog(self, self.current_location_depths, on_dialog_depths_applied, is_priority=False))
+            btn_depths.pack(side=tk.LEFT)
+        else:
+            self.current_event_priorities = self.edit_data.get("priority", [0])
+            if not self.current_event_priorities: self.current_event_priorities = [0]
+            tk.Label(basic_frame, text="Priority:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=2, column=0, sticky="e", padx=5, pady=2)
+            priority_panel = tk.Frame(basic_frame, bg="#fdf1dc")
+            priority_panel.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+            priority_lbl = tk.Label(priority_panel, text=", ".join(map(str, self.current_event_priorities)), font=self.body_font, bg="#fae6c5", fg="black", bd=1, relief=tk.SOLID, padx=10, pady=2)
+            priority_lbl.pack(side=tk.LEFT, padx=(0, 10))
+            def on_dialog_priorities_applied(new_priorities):
+                self.current_event_priorities = new_priorities
+                priority_lbl.config(text=", ".join(map(str, new_priorities)))
+            btn_priority = tk.Button(priority_panel, text="Select Priorities", font=("Arial", 9, "bold"), bg="#d9ad6c", command=lambda: DepthsSelectionDialog(self, self.current_event_priorities, on_dialog_priorities_applied, is_priority=True))
+            btn_priority.pack(side=tk.LEFT)
 
         def make_section(title_text):
             sec_frame = tk.Frame(self.edit_inner, bg="#fdf1dc", pady=5); sec_frame.pack(fill=tk.X)
@@ -2495,11 +2523,16 @@ import tkinter as tk
 from tkinter import font, ttk
 
 class MapGraphRenderer(tk.Frame):
-    def __init__(self, parent, map_root_dir, navigate_to_node_cb, *args, **kwargs):
+    def __init__(self, parent, map_root_dir, navigate_to_node_cb, mode="location", *args, **kwargs):
         super().__init__(parent, bg="#fdf1dc", *args, **kwargs)
         self.map_root = Path(map_root_dir).resolve()
         self.navigate_cb = navigate_to_node_cb
         self.layout_path = self.map_root / "graph_layout.json"
+        
+        # Branch variables based on the active mode context
+        self.mode = mode  # "location" or "event"
+        self.label_prefix = "Layer" if self.mode == "location" else "Priority"
+        self.data_key = "depths" if self.mode == "location" else "priority"
 
         # Live State Tracking Matrices
         self._drag_node_id = None
@@ -2516,11 +2549,11 @@ class MapGraphRenderer(tk.Frame):
         self._last_canvas_width = 0
         self._last_canvas_height = 0
 
-        # Layer Tracking State Managers
+        # Layer/Priority Tracking State Managers
         self.visible_layers = set()
         self.visible_layers_initialized = False
 
-        # Layer Filtering Control Top Panel Bar
+        # Filtering Control Top Panel Bar
         self.layers_frame = tk.Frame(self, bg="#fdf1dc")
         self.layers_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 5))
 
@@ -2593,7 +2626,7 @@ class MapGraphRenderer(tk.Frame):
         except Exception: pass
 
     def _toggle_layer(self, layer):
-        """Toggles a specific layer's visibility mask and triggers a screen refresh pass."""
+        """Toggles a specific filtering mask and triggers a screen refresh pass."""
         if layer in self.visible_layers:
             self.visible_layers.remove(layer)
         else:
@@ -2601,14 +2634,14 @@ class MapGraphRenderer(tk.Frame):
         self.draw_graph()
 
     def _get_layer_color(self, layer):
-        """Returns distinct colors for common Campaign levels with dynamic fallbacks."""
+        """Returns distinct colors for layout values with dynamic fallbacks."""
         colors = {
-            0: "#FFB300",   # Surface (Rich Amber Gold)
-            1: "#2ECC71",   # Upper Layer 1 (Vibrant Emerald Green)
-            2: "#00E5FF",   # Upper Layer 2 (Electric Cyan / High Sky)
-            -1: "#E74C3C",  # Lower Layer 1 / Underdark Tier 1 (Vibrant Crimson Red)
-            -2: "#9B59B6",  # Lower Layer 2 / Deep Underdark (Vibrant Amethyst Purple)
-            -3: "#FF5722"   # Lower Layer 3 / Core Abyssal Plains (Blazing Deep Orange)
+            0: "#FFB300",   # Baseline (Rich Amber Gold)
+            1: "#2ECC71",   # Tier 1 (Vibrant Emerald Green)
+            2: "#00E5FF",   # Tier 2 (Electric Cyan / High Sky)
+            -1: "#E74C3C",  # Lower Tier 1 (Vibrant Crimson Red)
+            -2: "#9B59B6",  # Lower Tier 2 (Vibrant Amethyst Purple)
+            -3: "#FF5722"   # Lower Tier 3 (Blazing Deep Orange)
         }
         if layer in colors:
             return colors[layer]
@@ -2629,7 +2662,8 @@ class MapGraphRenderer(tk.Frame):
         nodes_map = {}
         self._collect_nodes(self.map_root, nodes_map)
         if not nodes_map:
-            self.canvas.create_text(200, 50, text="Map directory is empty.", font=("Georgia", 14, "italic"), fill="black")
+            msg = f"{self.label_prefix}s directory is empty."
+            self.canvas.create_text(200, 50, text=msg, font=("Georgia", 14, "italic"), fill="black")
             return
 
         G = nx.DiGraph()
@@ -2697,12 +2731,12 @@ class MapGraphRenderer(tk.Frame):
             widget.destroy()
 
         if sorted_layers:
-            tk.Label(self.layers_frame, text="Layers Filter:", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+            tk.Label(self.layers_frame, text=f"{self.label_prefix} Filter:", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
             for layer in sorted_layers:
                 is_on = layer in self.visible_layers
                 btn_bg = "#7a200d" if is_on else "#e0cbb0"
                 btn_fg = "white" if is_on else "black"
-                lbl = f"Layer {layer}"
+                lbl = f"{self.label_prefix} {layer}"
                 
                 btn = tk.Button(
                     self.layers_frame, text=lbl, bg=btn_bg, fg=btn_fg,
@@ -2711,28 +2745,33 @@ class MapGraphRenderer(tk.Frame):
                 )
                 btn.pack(side=tk.LEFT, padx=3)
 
-        # Recenter button utility next to layers filter selectors
         recenter_btn = tk.Button(
             self.layers_frame, text="Recenter (0,0)", bg="#4a90e2", fg="white",
             font=("Arial", 9, "bold"), command=self.recenter_view
         )
         recenter_btn.pack(side=tk.LEFT, padx=12)
 
+        # Build active visibility index
         intrinsically_visible = set()
         for path_str, info in nodes_map.items():
             if any(d in self.visible_layers for d in info.get("depths", [0])):
                 intrinsically_visible.add(path_str)
 
-        cross_layer_visible = set()
-        for u, v, edge_data in G.edges(data=True):
-            if edge_data.get("type") == "connection":
-                u_pri = nodes_map[u].get("depths", [0])[0]
-                v_pri = nodes_map[v].get("depths", [0])[0]
-                if u_pri != v_pri:
-                    if u in intrinsically_visible: cross_layer_visible.add(v)
-                    if v in intrinsically_visible: cross_layer_visible.add(u)
-
-        visible_nodes = intrinsically_visible.union(cross_layer_visible)
+        # BRANCHING CONDITIONAL VISIBILITY LOGIC
+        if self.mode == "location":
+            # Locations: Include neighboring elements connected across unselected dimensions
+            cross_layer_visible = set()
+            for u, v, edge_data in G.edges(data=True):
+                if edge_data.get("type") == "connection":
+                    u_pri = nodes_map[u].get("depths", [0])[0]
+                    v_pri = nodes_map[v].get("depths", [0])[0]
+                    if u_pri != v_pri:
+                        if u in intrinsically_visible: cross_layer_visible.add(v)
+                        if v in intrinsically_visible: cross_layer_visible.add(u)
+            visible_nodes = intrinsically_visible.union(cross_layer_visible)
+        else:
+            # Events: Enforce strict, isolated filter criteria matching selected criteria only
+            visible_nodes = intrinsically_visible
 
         for node_id in G.nodes:
             if node_id not in visible_nodes:
@@ -2855,19 +2894,16 @@ class MapGraphRenderer(tk.Frame):
         nodes_min_x, nodes_max_x = min(cx_vals), max(cx_vals)
         nodes_min_y, nodes_max_y = min(cy_vals), max(cy_vals)
 
-        # Fetch active frame dimensions to calculate half-screen padding dynamically
         frame_w = max(100, self.canvas.winfo_width())
         frame_h = max(100, self.canvas.winfo_height())
         buffer_x = frame_w / 2
         buffer_y = frame_h / 2
 
-        # Lock down scroll region to prevent dragging the canvas past 1/2 screen past extremes
         min_region_x = nodes_min_x - buffer_x
         max_region_x = nodes_max_x + buffer_x
         min_region_y = nodes_min_y - buffer_y
         max_region_y = nodes_max_y + buffer_y
 
-        # Establish baseline size boundary limits
         if min_region_x > 0: min_region_x = 0
         if min_region_y > 0: min_region_y = 0
         if max_region_x < frame_w: max_region_x = frame_w
@@ -2922,7 +2958,6 @@ class MapGraphRenderer(tk.Frame):
         proposed_x = self.node_centers[self._drag_node_id][0] + dx
         proposed_y = self.node_centers[self._drag_node_id][1] + dy
 
-        # Nodes are moved without any viewport walls/clamping limits applied
         self.canvas.move(f"group:{self._drag_node_id}", dx, dy)
         self.node_centers[self._drag_node_id][0] = proposed_x
         self.node_centers[self._drag_node_id][1] = proposed_y
@@ -2953,8 +2988,6 @@ class MapGraphRenderer(tk.Frame):
 
         self._drag_start_x = cur_x
         self._drag_start_y = cur_y
-        
-        # Grow scroll region actively during drag operations
         self._update_scroll_region()
 
     def _on_node_release(self, event):
@@ -2991,13 +3024,9 @@ class MapGraphRenderer(tk.Frame):
                     "y": int(round(cy / sf))
                 }
 
-        layout_data = {
-            "reference_width": self.current_file_ref_width,
-            "nodes": saved_nodes
-        }
         try:
             with open(self.layout_path, "w", encoding="utf-8") as f: 
-                json.dump(layout_data, f, indent=4)
+                json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
         except Exception as e: 
             print(f"Failed layout write: {e}")
 
@@ -3015,7 +3044,9 @@ class MapGraphRenderer(tk.Frame):
                         m_data = json.load(f)
                         display_name = m_data.get("name", display_name)
                         connections = [(c.get("target"), c.get("description", "")) for c in m_data.get("connections", []) if c.get("target")]
-                        depths = m_data.get("depths", [0])
+                        
+                        # Dynamic parameter query checks key based on active configuration mode
+                        depths = m_data.get(self.data_key, [0])
                         if not isinstance(depths, list): depths = [depths]
                 except: pass
                 
@@ -3068,13 +3099,11 @@ class MapGraphRenderer(tk.Frame):
             self._on_node_hover_leave(None)
             return
 
-        # 1. Proportional Sizing (2/5 Screen Dimensions Max Width/Height)
         scr_w = self.winfo_screenwidth()
         scr_h = self.winfo_screenheight()
         popup_w = int(scr_w * 2 / 5)
         popup_h = int(scr_h * 2 / 5)
 
-        # 2. 4-Quadrant Inverse Position Placement Tracking
         mid_x = scr_w / 2
         mid_y = scr_h / 2
         x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15

@@ -333,3 +333,80 @@ class EntitySelectionDialog(tk.Toplevel):
             target_item_name = self.tree.item(sel[0])['values'][0]
             self.callback(target_item_name)
             self.destroy()
+
+class DepthsSelectionDialog(tk.Toplevel):
+    def __init__(self, parent, current_depths, callback, is_priority=False):
+        super().__init__(parent)
+        label_text = "Priorities" if is_priority else "Depths"
+        self.title(f"Select {label_text}")
+        self.geometry("380x480")
+        self.configure(bg="#fdf1dc")
+        self.callback = callback
+        self.transient(parent)
+        self.grab_set()
+
+        tk.Label(self, text=f"Select Location {label_text}", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack()
+        
+        list_frame = tk.Frame(self, bg="#fdf1dc")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        canvas = tk.Canvas(list_frame, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=canvas.yview)
+
+        scroll_inner = tk.Frame(canvas, bg="#fae6c5")
+        window_item = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
+        
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_item, width=e.width))
+        scroll_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        self.selected_depths = set(current_depths if current_depths else [0])
+
+        def toggle_row(d_val, row_frame, lbl_widget, base_bg):
+            if d_val in self.selected_depths:
+                self.selected_depths.remove(d_val)
+                row_frame.configure(bg=base_bg)
+                lbl_widget.configure(bg=base_bg, fg="black")
+            else:
+                self.selected_depths.add(d_val)
+                row_frame.configure(bg="#4a90e2")
+                lbl_widget.configure(bg="#4a90e2", fg="white")
+
+        for idx, d in enumerate(range(-20, 21)):
+            base_bg = "#f5e6ce" if idx % 2 == 0 else "#fae6c5"
+            
+            r_frame = tk.Frame(scroll_inner, bg=base_bg, bd=0, padx=15, pady=6)
+            r_frame.pack(fill=tk.X, expand=True)
+            
+            display_text = f"Priority {d}" if is_priority else f"Depth {d}"
+            if d == 0:
+                display_text = "Priority 0 (Default Baseline)" if is_priority else "Depth 0 (Default Surface)"
+                
+            lbl_widget = tk.Label(r_frame, text=display_text, font=("Times", 11, "bold"), bg=base_bg, fg="black", anchor="w")
+            lbl_widget.pack(fill=tk.X, expand=True)
+            
+            if d in self.selected_depths:
+                r_frame.configure(bg="#4a90e2")
+                lbl_widget.configure(bg="#4a90e2", fg="white")
+                
+            r_frame.bind("<Button-1>", lambda e, val=d, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(val, rf, lw, bbg))
+            lbl_widget.bind("<Button-1>", lambda e, val=d, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(val, rf, lw, bbg))
+
+        def apply_selection():
+            res = sorted(list(self.selected_depths))
+            self.callback(res if res else [0])
+            self.destroy()
+
+        btn_frame = tk.Frame(self, bg="#fdf1dc", pady=10)
+        btn_frame.pack(fill=tk.X)
+        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
+        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=self.destroy).pack(side=tk.RIGHT, padx=35)

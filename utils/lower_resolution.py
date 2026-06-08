@@ -2,8 +2,8 @@ from PIL import Image
 from pathlib import Path
 
 def lower_resolution_all():
-    utils_dir = Path("./utils")
-    for img_path in utils_dir.glob("*"):
+    utils_dir = Path("assets/")
+    for img_path in utils_dir.rglob("*"):
         if img_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.webp']:
             print(f"Resizing {img_path.name}...")
             try:

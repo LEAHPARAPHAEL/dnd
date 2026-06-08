@@ -6,8 +6,16 @@
     "combats": [],
     "events": [],
     "objects": [],
-    "connections": [],
+    "connections": [
+        {
+            "target": {
+                "name": "c",
+                "path": "C:\\Users\\Rapha\u00ebl Mathiot\\Documents\\GitHub\\dnd\\data\\map\\c"
+            },
+            "description": ""
+        }
+    ],
     "depths": [
-        1
+        0
     ]
 }

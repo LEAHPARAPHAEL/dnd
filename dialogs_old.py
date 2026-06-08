@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
-import utils
+import utils.preprocess as preprocess
+from pathlib import Path
+from PIL import Image, ImageTk
 
 class BaseSearchDialog(tk.Toplevel):
     """Abstract Parent Class consolidating common search indexing architectures, filter tool elements, and table rendering passes."""
@@ -142,7 +144,7 @@ class SpellSearchDialog(BaseSearchDialog):
             self._min_v = factory("Minimum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
             self._max_v = factory("Maximum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
             self._max_v.set(12)
-            self._sch_v = factory("School:", ttk.Combobox, values=["All"] + list(utils.SCHOOL_MAP.values()), state="readonly", width=22)
+            self._sch_v = factory("School:", ttk.Combobox, values=["All"] + list(preprocess.SCHOOL_MAP.values()), state="readonly", width=22)
             self._sch_v.set("All")
             self._dmg_v = factory("Damage Type:", ttk.Combobox, values=["All", "Acid", "Bludgeoning", "Cold", "Fire", "Force", "Lightning", "Necrotic", "Piercing", "Poison", "Psychic", "Radiant", "Slashing", "Thunder"], state="readonly", width=22)
             self._dmg_v.set("All")
@@ -156,7 +158,7 @@ class SpellSearchDialog(BaseSearchDialog):
         def apply_action():
             filters = []
             if self._min_v.get() > 0 or self._max_v.get() < 12: filters.append({"type": "level", "min": self._min_v.get(), "max": self._max_v.get()})
-            if self._sch_v.get() != "All": filters.append({"type": "school", "val": utils.INV_SCHOOL_MAP[self._sch_v.get()]})
+            if self._sch_v.get() != "All": filters.append({"type": "school", "val": preprocess.INV_SCHOOL_MAP[self._sch_v.get()]})
             if self._dmg_v.get() != "All": filters.append({"type": "damage", "val": self._dmg_v.get().lower()})
             if self._save_v.get() != "All": filters.append({"type": "save", "val": self._save_v.get().lower()})
             if self._conc_v.get() != "All": filters.append({"type": "concentration", "val": self._conc_v.get() == "Yes"})
@@ -189,7 +191,7 @@ class SpellSearchDialog(BaseSearchDialog):
                 except: pass
             tag = "evenrow" if count % 2 == 0 else "oddrow"
             idx = str(count)
-            self.tree.insert("", tk.END, iid=idx, values=(s["name"], "Cantrip" if s.get("level", 0) == 0 else str(s.get("level")), utils.SCHOOL_MAP.get(s.get("school", ""), "Unknown"), s.get("source", "Unknown")), tags=(tag,))
+            self.tree.insert("", tk.END, iid=idx, values=(s["name"], "Cantrip" if s.get("level", 0) == 0 else str(s.get("level")), preprocess.SCHOOL_MAP.get(s.get("school", ""), "Unknown"), s.get("source", "Unknown")), tags=(tag,))
             self.iid_map[idx] = s; count += 1
 
     def on_select(self):
@@ -257,7 +259,7 @@ class MonsterSearchDialog(BaseSearchDialog):
                     if b in ["AND", "OR", "(", ")"]: expr += f" {b.lower()} "
                     else:
                         match = True
-                        if b["type"] == "cr" and (utils.parse_cr(m.get("cr", "0")) < b["min"] or utils.parse_cr(m.get("cr", "0")) > b["max"]): match = False
+                        if b["type"] == "cr" and (preprocess.parse_cr(m.get("cr", "0")) < b["min"] or preprocess.parse_cr(m.get("cr", "0")) > b["max"]): match = False
                         elif b["type"] == "size" and m.get("size") != b["val"]: match = False
                         elif b["type"] == "type" and b["val"].lower() not in m.get("type", "").lower(): match = False
                         elif b["type"] == "align" and b["val"].lower() not in m.get("alignment", "").lower(): match = False
@@ -339,7 +341,9 @@ class DepthsSelectionDialog(tk.Toplevel):
         super().__init__(parent)
         label_text = "Priorities" if is_priority else "Depths"
         self.title(f"Select {label_text}")
-        self.geometry("380x480")
+
+        mx, my = self.winfo_pointerxy()
+        self.geometry(f"380x480+{mx + 10}+{my + 10}")
         self.configure(bg="#fdf1dc")
         self.callback = callback
         self.transient(parent)
@@ -353,21 +357,19 @@ class DepthsSelectionDialog(tk.Toplevel):
         scrollbar = ttk.Scrollbar(list_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        canvas = tk.Canvas(list_frame, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=canvas.yview)
+        self.canvas = tk.Canvas(list_frame, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.canvas.yview)
 
-        scroll_inner = tk.Frame(canvas, bg="#fae6c5")
-        window_item = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
+        scroll_inner = tk.Frame(self.canvas, bg="#fae6c5")
+        window_item = self.canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
         
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_item, width=e.width))
-        scroll_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(window_item, width=e.width))
+        scroll_inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        # CHANGE: Append a "break" return string token to fully consume the mousewheel event sequence
+        self.bind("<MouseWheel>", lambda event: [self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units"), "break"][1])
 
         self.selected_depths = set(current_depths if current_depths else [0])
 
@@ -411,7 +413,6 @@ class DepthsSelectionDialog(tk.Toplevel):
         tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
         tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=self.destroy).pack(side=tk.RIGHT, padx=35)
 
-
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 import tkinter.colorchooser as colorchooser
@@ -423,7 +424,8 @@ class TerrainSettingsDialog(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.title("Terrain Configuration")
-        self.geometry("420x580")  # Expanded safely to afford space for custom action nodes
+        mx, my = self.winfo_pointerxy()
+        self.geometry(f"440x480+{mx + 10}+{my + 10}")
         self.configure(bg="#fdf1dc")
         self.callback = callback
         self.transient(parent)
@@ -431,38 +433,25 @@ class TerrainSettingsDialog(tk.Toplevel):
 
         self.selected_size = current_size
         self.selected_color = current_color
+        self.focused_color_hex = None
         
-        # DECOUPLED STORAGE: Anchored inside your map's active working directory
         self.colors_path = Path(self.parent.map_root) / "terrain_colors.json"
 
-        tk.Label(self, text="Terrain Painting Tool", font=("Georgia", 14, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack()
+        tk.Label(self, text="Terrain Configuration Master", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=6).pack()
         
-        # 1. Brush Selection Panel Layout
-        size_frame = tk.LabelFrame(self, text="Select Brush Radius", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#7a200d", padx=10, pady=10)
-        size_frame.pack(fill=tk.X, padx=15, pady=5)
+        hint_lbl = "Click a swatch, then type a number (1-0) to bind it to a Quick-Bar slot.\nCustom colors appear first."
+        tk.Label(self, text=hint_lbl, font=("Arial", 9, "italic"), fg="#7a200d", bg="#fdf1dc", justify="center").pack(pady=(0, 5))
 
-        self.size_buttons = {}
-        sizes = [10, 20, 50, 100]
-        for idx, s in enumerate(sizes):
-            b_frame = tk.Frame(size_frame, bg="#fdf1dc")
-            b_frame.pack(side=tk.LEFT, expand=True, padx=5)
-            
-            box_dim = 12 + (idx * 6)
-            canvas_box = tk.Canvas(b_frame, width=box_dim, height=box_dim, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
-            canvas_box.pack(pady=2)
-            
-            btn = tk.Button(b_frame, text=f"{s}px", font=("Arial", 9, "bold"), command=lambda val=s: self._select_size(val))
-            btn.pack()
-            self.size_buttons[s] = (btn, canvas_box)
-
-        # 2. Grid Color Scroll Panel Layout
-        color_label_frame = tk.LabelFrame(self, text="Select Terrain Pattern Texture", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#7a200d", padx=10, pady=5)
+        # Grid Color Scroll Panel Layout
+        color_label_frame = tk.LabelFrame(self, text="Palette Asset Mapping Registry", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#7a200d", padx=10, pady=5)
         color_label_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
 
-        # Custom control panel nested internally above textures rows
         add_frame = tk.Frame(color_label_frame, bg="#fdf1dc")
         add_frame.pack(fill=tk.X, pady=(0, 5))
-        tk.Button(add_frame, text="+ Open Color Wheel", font=("Arial", 9, "bold"), bg="#4a90e2", fg="white", command=self._add_custom_color_wheel).pack(side=tk.RIGHT, padx=5)
+        
+        tk.Button(add_frame, text="Delete", font=("Arial", 9, "bold"), bg="#ff4d4d", fg="white", command=self._delete_custom_color).pack(side=tk.RIGHT, padx=2)
+        tk.Button(add_frame, text="Edit Selected", font=("Arial", 9, "bold"), bg="#dfa87a", fg="black", command=self._edit_custom_color).pack(side=tk.RIGHT, padx=2)
+        tk.Button(add_frame, text="New Color", font=("Arial", 9, "bold"), bg="#4a90e2", fg="white", command=self._add_custom_color_wheel).pack(side=tk.RIGHT, padx=2)
 
         list_outer = tk.Frame(color_label_frame, bg="#fdf1dc")
         list_outer.pack(fill=tk.BOTH, expand=True)
@@ -478,119 +467,264 @@ class TerrainSettingsDialog(tk.Toplevel):
         self.window_item = self.canvas.create_window((0, 0), window=self.scroll_inner, anchor="nw")
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self.window_item, width=e.width))
 
-        # REFACTOR: Soft desaturated pastel cartography baseline values matrix
         self.map_colors = [
             ("#9ccca0", "Grassland"), ("#7aa37a", "Deep Forest"), ("#8bbbb0", "Swamp/Marsh"),
             ("#dfa87a", "Dirt Roads"), ("#cb7d6a", "Badlands/Clay"), ("#ebd391", "Desert Sand"),
             ("#9ac6e6", "Shallow Streams"), ("#6488a4", "Ocean Abyss"), ("#b399c7", "Arcane Waste"),
-            ("#aeb6bf", "Stone Mountain"), ("#85929e", "Underdark Cavity"), ("#ffffff", "Eraser (White)")
+            ("#aeb6bf", "Stone Mountain"), ("#85929e", "Underdark Cavity")
         ]
 
         self.color_widgets = {}
-        self._load_custom_colors()
+        self._load_colors_config()
         self._build_color_grid()
 
-        self._select_size(self.selected_size)
         self._select_color(self.selected_color)
+        self.bind("<Key>", self._on_key_assignment)
 
-        # 3. Safe Relative Spacing Action Frame Rows
-        self.bind("<Return>", lambda e: self._apply())
+        # Action Control Row
         btn_frame = tk.Frame(self, bg="#fdf1dc")
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(15, 30), padx=15)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(15, 25), padx=15)
         btn_frame.columnconfigure(0, weight=1)
         btn_frame.columnconfigure(1, weight=1)
 
-        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#2ecc71", fg="white", command=self._apply).grid(row=0, column=0, padx=25, sticky="ew")
-        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", command=self.destroy).grid(row=0, column=1, padx=25, sticky="ew")
+        tk.Button(btn_frame, text="Apply Settings", font=("Arial", 10, "bold"), bg="#2ecc71", fg="white", command=self._apply).grid(row=0, column=0, padx=20, sticky="ew")
+        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", command=self.destroy).grid(row=0, column=1, padx=20, sticky="ew")
 
-    def _load_custom_colors(self):
+    def _load_colors_config(self):
         self.custom_colors = []
         if self.colors_path.exists():
             try:
                 with open(self.colors_path, "r", encoding="utf-8") as f:
-                    self.custom_colors = json.load(f)
+                    cfg = json.load(f)
+                    if isinstance(cfg, dict):
+                        self.custom_colors = cfg.get("custom_palette", [])
+                    else:
+                        self.custom_colors = cfg
             except: pass
 
-    def _save_custom_colors(self):
+    def _save_colors_config(self):
         try:
+            cfg = {
+                "quick_slots": self.parent.quick_colors,
+                "custom_palette": self.custom_colors
+            }
             with open(self.colors_path, "w", encoding="utf-8") as f:
-                json.dump(self.custom_colors, f, indent=4)
-        except Exception as e:
-            print(f"Failed to record custom terrain colors: {e}")
+                json.dump(cfg, f, indent=4)
+        except Exception as e: print(f"Failed configuration write sequence: {e}")
 
     def _build_color_grid(self):
-        """Rebuilds the color frame elements layout table cleanly to incorporate new colors."""
-        for w in self.scroll_inner.winfo_children():
-            w.destroy()
+        for w in self.scroll_inner.winfo_children(): w.destroy()
         self.color_widgets.clear()
 
-        # Combine fixed soft pastel settings with loaded dynamic listings
         all_colors = [(c[0], c[1]) for c in self.custom_colors] + self.map_colors
         
         for i, (hex_c, label) in enumerate(all_colors):
             row = i // 3
             col = i % 3
             
-            c_cell = tk.Frame(self.scroll_inner, bg="#fae6c5", padx=4, pady=6)
-            c_cell.grid(row=row, column=col, sticky="nsew", padx=4, pady=2)
+            c_cell = tk.Frame(self.scroll_inner, bg="#fae6c5", padx=4, pady=4, bd=1, relief=tk.FLAT)
+            c_cell.grid(row=row, column=col, sticky="nsew", padx=3, pady=2)
             
-            sq = tk.Frame(c_cell, width=24, height=24, bg=hex_c, bd=1, relief=tk.SOLID)
+            sq = tk.Frame(c_cell, width=32, height=24, bg=hex_c, bd=1, relief=tk.SOLID)
             sq.pack(pady=2)
+            sq.pack_propagate(False)
+            
+            slot_num = ""
+            if hex_c.lower() in [qc.lower() for qc in self.parent.quick_colors]:
+                idx = [qc.lower() for qc in self.parent.quick_colors].index(hex_c.lower())
+                slot_num = str((idx + 1) % 10)
+                
+            sq_lbl = tk.Label(sq, text=slot_num, font=("Arial", 9, "bold"), bg=hex_c, fg="black" if hex_c.lower() != "#ffffff" else "gray")
+            sq_lbl.pack(expand=True)
             
             lbl = tk.Label(c_cell, text=label, font=("Times", 9, "bold"), bg="#fae6c5", fg="black")
             lbl.pack()
             
-            for widget in [c_cell, sq, lbl]:
-                widget.bind("<Button-1>", lambda e, hc=hex_c: self._select_color(hc))
+            for w in [c_cell, sq, sq_lbl, lbl]:
+                w.bind("<Button-1>", lambda e, hc=hex_c: self._focus_color_entry(hc))
             self.color_widgets[hex_c] = c_cell
 
         self.scroll_inner.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
+    def _focus_color_entry(self, hex_c):
+        self.focused_color_hex = hex_c
+        self._select_color(hex_c)
+        for hc, cell in self.color_widgets.items():
+            if hc.lower() == hex_c.lower():
+                cell.configure(bd=1, relief=tk.SOLID, bg="#4a90e2")
+            else:
+                cell.configure(bd=1, relief=tk.FLAT, bg="#fae6c5")
+
+    def _delete_custom_color(self):
+        if not self.focused_color_hex:
+            messagebox.showinfo("Note", "Please select a custom color from the grid panel first.")
+            return
+        
+        target = next((c for c in self.custom_colors if c[0].lower() == self.focused_color_hex.lower()), None)
+        if not target:
+            messagebox.showwarning("Warning", "Baseline default palette textures cannot be deleted.")
+            return
+            
+        if messagebox.askyesno("Confirm Delete", f"Delete custom texture color '{target[1]}' permanently from palette?"):
+            for idx, qc in enumerate(self.parent.quick_colors):
+                if qc.lower() == self.focused_color_hex.lower():
+                    self.parent.quick_colors[idx] = "#ffffff"  
+            
+            self.custom_colors.remove(target)
+            self._save_colors_config()
+            self.focused_color_hex = None
+            self._build_color_grid()
+
     def _add_custom_color_wheel(self):
-        """Spawns system native colorchooser module featuring interactive color wheels."""
-        chosen = colorchooser.askcolor(title="Choose Custom Terrain Color", parent=self)
+        chosen = colorchooser.askcolor(title="Select Custom Pattern", parent=self)
         if not chosen or not chosen[1]: return
         hex_color = chosen[1]
 
-        # Request descriptions identifier tags
-        name = simpledialog.askstring("Color Description", "Enter a name for this custom texture:", parent=self)
-        if not name or not name.strip():
-            name = f"Custom ({hex_color})"
-        else:
-            name = name.strip()
+        name = simpledialog.askstring("Label configuration", "Enter a name for this custom texture:", parent=self)
+        name = name.strip() if (name and name.strip()) else f"Custom ({hex_color})"
 
         if any(c[0].lower() == hex_color.lower() for c in self.custom_colors):
             messagebox.showinfo("Note", "This precise tone code is already saved in your panel options!")
             return
 
         self.custom_colors.append([hex_color, name])
-        self._save_custom_colors()
+        self._save_colors_config()
         self._build_color_grid()
-        self._select_color(hex_color)
+        self._focus_color_entry(hex_color)
 
-    def _select_size(self, size):
-        self.selected_size = size
-        for s, (btn, c_box) in self.size_buttons.items():
-            if s == size:
-                btn.configure(bg="#4a90e2", fg="white")
-                c_box.configure(highlightbackground="#4a90e2", highlightthickness=2)
-            else:
-                btn.configure(bg="#e0cbb0", fg="black")
-                c_box.configure(highlightbackground="#d9ad6c", highlightthickness=1)
+    def _on_key_assignment(self, event):
+        if not self.focused_color_hex: return
+        key_map = {
+            '1': 0, 'ampersand': 0, '2': 1, 'eacute': 1, '3': 2, 'quotedbl': 2,
+            '4': 3, 'apostrophe': 3, '5': 4, 'parenleft': 4, '6': 5, 'minus': 5,
+            '7': 6, 'egrave': 6, '8': 7, 'underscore': 7, '9': 8, 'ccedilla': 8,
+            '0': 9, 'agrave': 9
+        }
+        sym = event.keysym.lower()
+        if sym in key_map:
+            slot_idx = key_map[sym]
+            for idx, existing_hex in enumerate(self.parent.quick_colors):
+                if existing_hex.lower() == self.focused_color_hex.lower():
+                    self.parent.quick_colors[idx] = "#ffffff"
+            
+            self.parent.quick_colors[slot_idx] = self.focused_color_hex
+            self._save_colors_config()
+            self._build_color_grid()
+            self._focus_color_entry(self.focused_color_hex)
 
     def _select_color(self, color_hex):
         self.selected_color = color_hex
-        for hex_c, cell in self.color_widgets.items():
-            if hex_c.lower() == color_hex.lower():
-                cell.configure(bg="#4a90e2")
-                for child in cell.winfo_children():
-                    if isinstance(child, tk.Label): child.configure(bg="#4a90e2", fg="white")
-            else:
-                cell.configure(bg="#fae6c5")
-                for child in cell.winfo_children():
-                    if isinstance(child, tk.Label): child.configure(bg="#fae6c5", fg="black")
 
     def _apply(self):
         self.callback(self.selected_size, self.selected_color)
         self.destroy()
+
+    def _edit_custom_color(self):
+        """Modifies both the color code and label parameters of an active custom swatch."""
+        if not self.focused_color_hex:
+            messagebox.showinfo("Note", "Please select a custom color from the grid panel first.")
+            return
+        
+        # Verify the selected color resides in our user-defined registry array index
+        target_idx = next((i for i, c in enumerate(self.custom_colors) if c[0].lower() == self.focused_color_hex.lower()), None)
+        if target_idx is None:
+            messagebox.showwarning("Warning", "Baseline default system palette colors cannot be edited.")
+            return
+            
+        old_hex, old_name = self.custom_colors[target_idx]
+        
+        # Open color wheel pre-focused on the old hex choice parameters context
+        chosen = colorchooser.askcolor(color=old_hex, title="Edit Custom Terrain Color", parent=self)
+        if not chosen or not chosen[1]: return
+        new_hex = chosen[1]
+
+        # Prompt for a description name while pre-filling the original text as default
+        name = simpledialog.askstring("Label Configuration", "Modify texture configuration description name:", initialvalue=old_name, parent=self)
+        name = name.strip() if (name and name.strip()) else old_name
+
+        # Synchronization: Update the parent hotbar live if this color was currently assigned to a slot
+        for idx, qc in enumerate(self.parent.quick_colors):
+            if qc.lower() == old_hex.lower():
+                self.parent.quick_colors[idx] = new_hex
+
+        # Commit updates directly back to config arrays
+        self.custom_colors[target_idx] = [new_hex, name]
+        self._save_colors_config()
+        
+        # Re-focus onto our newly mutated item entity definitions frame
+        self.focused_color_hex = new_hex
+        self._build_color_grid()
+        self._focus_color_entry(new_hex)
+
+
+class NodeIconSelectorDialog(tk.Toplevel):
+    def __init__(self, parent, current_mode, callback):
+        super().__init__(parent)
+        self.title("Select Node Icon")
+        mx, my = self.winfo_pointerxy()
+        self.geometry(f"400x500+{mx + 10}+{my + 10}")
+        self.configure(bg="#fdf1dc")
+        self.transient(parent)
+        self.grab_set()
+        
+        tk.Label(self, text="Choose Custom Icon Mark", font=("Georgia", 12, "bold"), fg="#58180d", bg="#fdf1dc", pady=10).pack()
+        
+        dir_name = "location_icons" if current_mode == "location" else "events_icons"
+        self.target_dir = Path("assets/icons") / dir_name
+        
+        if not self.target_dir.exists():
+            self.target_dir.mkdir(parents=True, exist_ok=True)
+            
+        outer_f = tk.Frame(self, bg="#fdf1dc")
+        outer_f.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        scrollbar = ttk.Scrollbar(outer_f)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.canvas = tk.Canvas(outer_f, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.canvas.yview)
+        
+        inner_f = tk.Frame(self.canvas, bg="#fae6c5")
+        window_item = self.canvas.create_window((0, 0), window=inner_f, anchor="nw")
+        
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(window_item, width=e.width))
+        inner_f.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        
+        # CHANGE: Append a "break" return string token to fully consume the mousewheel event sequence
+        self.bind("<MouseWheel>", lambda event: [self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units"), "break"][1])
+
+        # CHANGE: Distribute weights evenly so icons don't bunch up leaving an empty column space
+        for c in range(4):
+            inner_f.grid_columnconfigure(c, weight=1)
+
+        
+        pngs = sorted(list(self.target_dir.glob("*.png")))
+        if not pngs:
+            tk.Label(inner_f, text=f"No icons found inside\n{self.target_dir.as_posix()}", font=("Arial", 10, "italic"), bg="#fae6c5", fg="gray").pack(pady=40, expand=True)
+        
+        self._keep_alive_images = []
+        for idx, p in enumerate(pngs):
+            row = idx // 4
+            col = idx % 4
+            
+            cell = tk.Frame(inner_f, bg="#fae6c5", padx=5, pady=5)
+            cell.grid(row=row, column=col, sticky="nsew")
+            
+            try:
+                pil_img = Image.open(p)
+                pil_img.thumbnail((48, 48))
+                tk_img = ImageTk.PhotoImage(pil_img)
+                self._keep_alive_images.append(tk_img)
+                
+                btn = tk.Button(cell, image=tk_img, bg="#fdf1dc", activebackground="#4a90e2", command=lambda path=p: [callback(path), self.destroy()])
+                btn.pack()
+                
+                lbl_text = p.stem[:10] + "..." if len(p.stem) > 12 else p.stem
+                tk.Label(cell, text=lbl_text, font=("Arial", 8), bg="#fae6c5", fg="black").pack()
+            except Exception as e:
+                print(f"Failed loading dialog preview image: {e}")
+                
+        tk.Button(self, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", command=self.destroy, pady=5).pack(pady=15)

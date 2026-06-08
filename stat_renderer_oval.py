@@ -4,10 +4,8 @@ import re
 import json
 import copy
 import utils.preprocess as preprocess
-from dialogs import SpellSearchDialog, DepthsSelectionDialog, TerrainSettingsDialog, NodeIconSelectorDialog
+from dialogs import SpellSearchDialog, DepthsSelectionDialog, TerrainSettingsDialog
 from pathlib import Path
-from PIL import Image, ImageTk
-import shutil
 
 # ==================== CONDITIONS DATABASE ====================
 CONDITIONS_DB = {
@@ -2679,7 +2677,7 @@ class MapGraphRenderer(tk.Frame):
 
     def adjust_zoom(self, units):
         factor = 1.1 if units < 0 else 0.9; new_zoom = self.zoom_level * factor
-        if self.MIN_ZOOM <= new_zoom <= self.MAX_ZOOM: self.zoom_level = new_zoom; self.draw_graph(redraw_controls=False)
+        if self.MIN_ZOOM <= new_zoom <= self.MAX_ZOOM: self.zoom_level = new_zoom; self.draw_graph()
 
     def toggle_edge_mode(self):
         if self.current_mode == "edge": self.current_mode = "select"; self._edge_start_node = None
@@ -2747,7 +2745,6 @@ class MapGraphRenderer(tk.Frame):
             self.terrain_color = "#ffffff"  # Eraser selection shortcut
             self.draw_graph()
             return True
-        elif key == 'i': self.open_node_icon_selector(); return True
         elif key == 'l': self.toggle_edge_mode(); return True
         elif key == 'p': self.toggle_parent_mode(); return True
         elif key == 'a': self.toggle_new_mode(); return True
@@ -2787,11 +2784,17 @@ class MapGraphRenderer(tk.Frame):
         if event.width != self._last_canvas_width or event.height != self._last_canvas_height:
             self._last_canvas_width = event.width; self._last_canvas_height = event.height; self.draw_graph()
 
-    def draw_graph(self, redraw_controls=True):
+    def draw_graph(self):
         self._on_node_hover_leave(None); self._is_panning = False
         self.canvas.delete("all"); self.node_centers.clear(); self.edge_registry.clear(); self.nodes_map.clear()
         
+        for widget in self.layers_frame.winfo_children(): widget.destroy()
+
         self._collect_nodes(self.map_root, self.nodes_map)
+        
+        row1 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row1.pack(fill=tk.X, side=tk.TOP)
+        row2 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row2.pack(fill=tk.X, side=tk.TOP, pady=3)
+        row3 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row3.pack(fill=tk.X, side=tk.TOP)
 
         current_canvas_width = self.canvas.winfo_width()
         if current_canvas_width <= 1: current_canvas_width = self.current_file_ref_width
@@ -2805,72 +2808,63 @@ class MapGraphRenderer(tk.Frame):
             if not self.visible_layers_initialized:
                 self.visible_layers = set(sorted_layers); self.visible_layers_initialized = True
             else: self.visible_layers = self.visible_layers.intersection(all_layers)
-        else:
-            # --- FIXED: RESET INITIALIZATION ENGINE WHEN DIRECTORY IS EMPTY ---
-            self.visible_layers_initialized = False
 
-        if redraw_controls:
-            for widget in self.layers_frame.winfo_children(): widget.destroy()
+        if sorted_layers:
+            tk.Label(row1, text=f"{self.label_prefix}:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
             
-            row1 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row1.pack(fill=tk.X, side=tk.TOP)
-            row2 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row2.pack(fill=tk.X, side=tk.TOP, pady=3)
-            row3 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row3.pack(fill=tk.X, side=tk.TOP)
-
-            if sorted_layers:
-                tk.Label(row1, text=f"{self.label_prefix}:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
-                
-                filters_frame = tk.Frame(row1, bg="#fdf1dc")
-                filters_frame.pack(side=tk.LEFT, padx=5)
-                
-                for layer in sorted_layers:
-                    is_on = layer in self.visible_layers
-                    if is_on:
-                        btn = tk.Button(filters_frame, text=str(layer), bg="#4a90e2", fg="white", 
-                                        font=("Arial", 8, "bold"), width=3, relief=tk.RAISED,
-                                        command=lambda l=layer: self._toggle_layer(l))
-                    else:
-                        btn = tk.Button(filters_frame, text=str(layer), font=("Arial", 8, "bold"), 
-                                        width=3, relief=tk.SUNKEN,
-                                        command=lambda l=layer: self._toggle_layer(l))
-                    btn.pack(side=tk.LEFT, padx=2)
-
-            tk.Button(row1, text="Recenter (0,0)", bg="#4a90e2", fg="white", font=("Arial", 8, "bold"), command=self.recenter_view).pack(side=tk.LEFT, padx=(12, 2))
+            filters_frame = tk.Frame(row1, bg="#fdf1dc")
+            filters_frame.pack(side=tk.LEFT, padx=5)
             
-            for mode_lbl, mode_val, bg_c in [("Edge (L)", "edge", "#4a90e2"), ("Parent (P)", "parent", "#4a90e2"), ("New (A)", "new", "#2ecc71"), ("Icon (I)", "icon", "#dfa87a"), ("Delete (Del)", "delete", "#ff4d4d")]:
-                is_active = (self.current_mode == mode_val)
-                if mode_val == "icon":
-                    cmd = self.open_node_icon_selector
+            for layer in sorted_layers:
+                is_on = layer in self.visible_layers
+                if is_on:
+                    btn = tk.Button(filters_frame, text=str(layer), bg="#4a90e2", fg="white", 
+                                    font=("Arial", 8, "bold"), width=3, relief=tk.RAISED,
+                                    command=lambda l=layer: self._toggle_layer(l))
                 else:
-                    cmd = getattr(self, f"toggle_{mode_val}_mode") if mode_val != "parent" else self.toggle_parent_mode
-                tk.Button(row1, text=mode_lbl, bg=bg_c if is_active else "#e0cbb0", fg="white" if is_active else "black", font=("Arial", 8, "bold"), command=cmd).pack(side=tk.LEFT, padx=2)
+                    btn = tk.Button(filters_frame, text=str(layer), font=("Arial", 8, "bold"), 
+                                    width=3, relief=tk.SUNKEN,
+                                    command=lambda l=layer: self._toggle_layer(l))
+                btn.pack(side=tk.LEFT, padx=2)
 
-            tk.Label(row2, text="Quick Palette:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
-            for idx, qc_hex in enumerate(self.quick_colors):
-                display_num = str((idx + 1) % 10); is_active_color = (self.terrain_color.lower() == qc_hex.lower())
-                sq_frame = tk.Frame(row2, width=22, height=18, bg=qc_hex, bd=2 if is_active_color else 1, relief=tk.SOLID if is_active_color else tk.GROOVE)
-                sq_frame.pack(side=tk.LEFT, padx=2); sq_frame.pack_propagate(False)
-                lbl_num = tk.Label(sq_frame, text=display_num, font=("Arial", 7, "bold"), bg=qc_hex, fg="black")
-                lbl_num.pack(expand=True)
-                for w in [sq_frame, lbl_num]: w.bind("<Button-1>", lambda e, hc=qc_hex: [setattr(self, 'terrain_color', hc), self.draw_graph(redraw_controls=True)])
+        # Packed sequentially side-by-side to the LEFT right after the last layer button
+        tk.Button(row1, text="Recenter (0,0)", bg="#4a90e2", fg="white", font=("Arial", 8, "bold"), command=self.recenter_view).pack(side=tk.LEFT, padx=(12, 2))
+        
+        # Order structured intentionally from left to right inside our row matrix alignment
+        for mode_lbl, mode_val, bg_c in [("Edge (L)", "edge", "#4a90e2"), ("Parent (P)", "parent", "#4a90e2"), ("New (A)", "new", "#2ecc71"), ("Delete (Del)", "delete", "#ff4d4d")]:
+            is_active = (self.current_mode == mode_val)
+            cmd = getattr(self, f"toggle_{mode_val}_mode") if mode_val != "parent" else self.toggle_parent_mode
+            tk.Button(row1, text=mode_lbl, bg=bg_c if is_active else "#e0cbb0", fg="white" if is_active else "black", font=("Arial", 8, "bold"), command=cmd).pack(side=tk.LEFT, padx=2)
 
-            is_eraser_active = (self.terrain_color.lower() == "#ffffff")
-            er_frame = tk.Frame(row2, width=22, height=18, bg="#ffffff", bd=2 if is_eraser_active else 1, relief=tk.SOLID if is_eraser_active else tk.GROOVE)
-            er_frame.pack(side=tk.LEFT, padx=(6, 2)); er_frame.pack_propagate(False)
-            lbl_er = tk.Label(er_frame, text="X", font=("Arial", 7, "bold"), bg="#ffffff", fg="red")
-            lbl_er.pack(expand=True)
-            for w in [er_frame, lbl_er]: w.bind("<Button-1>", lambda e: [setattr(self, 'terrain_color', '#ffffff'), self.draw_graph(redraw_controls=True)])
+        # 2. Render Palette Hotbar
+        tk.Label(row2, text="Quick Palette:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+        for idx, qc_hex in enumerate(self.quick_colors):
+            display_num = str((idx + 1) % 10); is_active_color = (self.terrain_color.lower() == qc_hex.lower())
+            sq_frame = tk.Frame(row2, width=22, height=18, bg=qc_hex, bd=2 if is_active_color else 1, relief=tk.SOLID if is_active_color else tk.GROOVE)
+            sq_frame.pack(side=tk.LEFT, padx=2); sq_frame.pack_propagate(False)
+            lbl_num = tk.Label(sq_frame, text=display_num, font=("Arial", 7, "bold"), bg=qc_hex, fg="black")
+            lbl_num.pack(expand=True)
+            for w in [sq_frame, lbl_num]: w.bind("<Button-1>", lambda e, hc=qc_hex: [setattr(self, 'terrain_color', hc), self.draw_graph()])
 
-            try:
-                hex_strip = self.terrain_color.lstrip('#')
-                text_fg = "white" if (int(hex_strip[0:2],16)*0.299 + int(hex_strip[2:4],16)*0.587 + int(hex_strip[4:6],16)*0.114) < 130 else "black"
-            except: text_fg = "black"
-            tk.Button(row2, text="Select Master...", bg=self.terrain_color, fg=text_fg, font=("Arial", 8, "bold"), command=self.open_terrain_settings_panel).pack(side=tk.LEFT, padx=12)
+        is_eraser_active = (self.terrain_color.lower() == "#ffffff")
+        er_frame = tk.Frame(row2, width=22, height=18, bg="#ffffff", bd=2 if is_eraser_active else 1, relief=tk.SOLID if is_eraser_active else tk.GROOVE)
+        er_frame.pack(side=tk.LEFT, padx=(6, 2)); er_frame.pack_propagate(False)
+        lbl_er = tk.Label(er_frame, text="X", font=("Arial", 7, "bold"), bg="#ffffff", fg="red")
+        lbl_er.pack(expand=True)
+        for w in [er_frame, lbl_er]: w.bind("<Button-1>", lambda e: [setattr(self, 'terrain_color', '#ffffff'), self.draw_graph()])
 
-            tk.Label(row3, text="Brush Radius:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
-            for size_val in [10, 20, 50, 100]:
-                is_sz_active = (self.terrain_size == size_val)
-                tk.Button(row3, text=f"{size_val}px", bg="#4a90e2" if is_sz_active else "#e0cbb0", fg="white" if is_sz_active else "black",
-                          font=("Arial", 8, "bold"), command=lambda sv=size_val: [setattr(self, 'terrain_size', sv), self.draw_graph(redraw_controls=True)]).pack(side=tk.LEFT, padx=2)
+        try:
+            hex_strip = self.terrain_color.lstrip('#')
+            text_fg = "white" if (int(hex_strip[0:2],16)*0.299 + int(hex_strip[2:4],16)*0.587 + int(hex_strip[4:6],16)*0.114) < 130 else "black"
+        except: text_fg = "black"
+        tk.Button(row2, text="Select Master...", bg=self.terrain_color, fg=text_fg, font=("Arial", 8, "bold"), command=self.open_terrain_settings_panel).pack(side=tk.LEFT, padx=12)
+
+        # 3. Brush Size Row Configuration Panel
+        tk.Label(row3, text="Brush Radius:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+        for size_val in [10, 20, 50, 100]:
+            is_sz_active = (self.terrain_size == size_val)
+            tk.Button(row3, text=f"{size_val}px", bg="#4a90e2" if is_sz_active else "#e0cbb0", fg="white" if is_sz_active else "black",
+                      font=("Arial", 8, "bold"), command=lambda sv=size_val: [setattr(self, 'terrain_size', sv), self.draw_graph()]).pack(side=tk.LEFT, padx=2)
 
         if not self.nodes_map: return
 
@@ -2913,7 +2907,7 @@ class MapGraphRenderer(tk.Frame):
         x_vals = [c[0] for c in raw_pos.values()]; y_vals = [c[1] for c in raw_pos.values()]
         min_x, max_x = min(x_vals), max(x_vals); min_y, max_y = min(y_vals), max(y_vals)
         x_range = (max_x - min_x) if max_x != min_x else 1; y_range = (max_y - min_y) if max_y != min_y else 1
-        self.node_radius = int(16 * self.zoom_level)  
+        self.node_radius = max(6, int(min(15, int(15 * scale_factor)) * self.zoom_level))  
         needs_save_update = False
 
         # --- FIXED: REUNITE THE VISIBILITY PIPELINES ACROSS LOCATIONS & EVENTS WITH CONSTRAINTS ---
@@ -2963,13 +2957,7 @@ class MapGraphRenderer(tk.Frame):
                 if is_edge_selected:
                     current_fill = "#ff9900"; current_thick = max(4, int(5 * self.zoom_level))
                 else:
-                    # CHANGE: Color line based on the lowest layer of the target node 'v'
-                    target_info = self.nodes_map.get(v)
-                    if target_info and "depths" in target_info:
-                        current_fill = self._get_layer_color(min(target_info["depths"]))
-                    else:
-                        current_fill = "#000000"
-                    current_thick = edge_thickness if edge_data.get("type") == "connection" else max(1, int(1*self.zoom_level))
+                    current_fill = "#000000"; current_thick = edge_thickness if edge_data.get("type") == "connection" else max(1, int(1*self.zoom_level))
                 
                 if edge_data.get("type") == "connection":
                     if G.has_edge(v, u) and G[v][u].get("type") == "connection":
@@ -2980,24 +2968,12 @@ class MapGraphRenderer(tk.Frame):
                         tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
                         end_x = vx - (tdx / t_length) * arrow_padding if t_length > arrow_padding else vx
                         end_y = vy - (tdy / t_length) * arrow_padding if t_length > arrow_padding else vy
-                        
-                        # CHANGE: Offset curved start along vector pointing to control vertex
-                        fdx, fdy = ctrl_x - ux, ctrl_y - uy
-                        f_length = math.hypot(fdx, fdy) or 1
-                        start_x = ux + (fdx / f_length) * arrow_padding if f_length > arrow_padding else ux
-                        start_y = uy + (fdy / f_length) * arrow_padding if f_length > arrow_padding else uy
-                        
-                        line_id = self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        line_id = self.canvas.create_line(ux, uy, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding": arrow_padding})
                     else:
                         end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
                         end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
-                        
-                        # CHANGE: Offset straight link start coordinate symmetric to end target
-                        start_x = ux + (dx / length) * arrow_padding if length > arrow_padding else ux
-                        start_y = uy + (dy / length) * arrow_padding if length > arrow_padding else uy
-                        
-                        line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        line_id = self.canvas.create_line(ux, uy, end_x, end_y, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
                     if desc:
                         self.canvas.tag_bind(line_id, "<Enter>", lambda e, lid=line_id, d=desc: self._on_edge_enter(e, lid, d))
@@ -3006,19 +2982,7 @@ class MapGraphRenderer(tk.Frame):
                 else:
                     end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
                     end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
-                    
-                    # CHANGE: Apply padding logic to structural dashed lines as well
-                    start_x = ux + (dx / length) * arrow_padding if length > arrow_padding else ux
-                    start_y = uy + (dy / length) * arrow_padding if length > arrow_padding else uy
-                    
-                    # CHANGE: Color parent structural line based on target layer when unselected
-                    if not is_edge_selected:
-                        target_info = self.nodes_map.get(v)
-                        edge_fill = self._get_layer_color(min(target_info["depths"])) if (target_info and "depths" in target_info) else "#555555"
-                    else:
-                        edge_fill = current_fill
-                        
-                    line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, fill=edge_fill, dash=(4, 4), width=current_thick, arrow=tk.LAST, arrowshape=(max(5, int(8*self.zoom_level)), max(6, int(10*self.zoom_level)), max(2, int(3*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
+                    line_id = self.canvas.create_line(ux, uy, end_x, end_y, fill="#555555" if not is_edge_selected else current_fill, dash=(4, 4), width=current_thick, arrow=tk.LAST, arrowshape=(max(5, int(8*self.zoom_level)), max(6, int(10*self.zoom_level)), max(2, int(3*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                     self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
 
         text_offset = self.node_radius + max(4, int(8 * scale_factor * self.zoom_level))
@@ -3028,31 +2992,17 @@ class MapGraphRenderer(tk.Frame):
             if node_id not in visible_nodes: continue
             info = self.nodes_map[node_id]; node_obj = info["node"]
             bg_color = self._get_layer_color(info.get("depths", [0])[0])
+            
             is_slc = (node_id == self.selected_node_id) or (node_id == self._edge_start_node) or (node_id == self._new_node_parent_id)
+            border_w = 4 if is_slc else (1 if node_obj.is_entity else 2)
+            outline_color = "#4a90e2" if is_slc else "#58180d"
             
-            # Shared tags for all components of this node
-            node_tags = ("node", "drag_handle", f"path:{node_id}", f"group:{node_id}")
+            self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, fill=bg_color, outline=outline_color, width=border_w, tags=("node", "drag_handle", f"path:{node_id}", f"group:{node_id}"))
             
-            img_obj = self._get_node_icon_image(node_id)
-            if img_obj:
-                self.canvas.create_image(center_x, center_y, image=img_obj, tags=node_tags)
-                if is_slc:
-                    # CHANGE: Swap fixed blue outline for dynamic layer color
-                    self.canvas.create_rectangle(center_x - self.node_radius - 2, center_y - self.node_radius - 2, 
-                                                center_x + self.node_radius + 2, center_y + self.node_radius + 2, 
-                                                outline=bg_color, width=3, tags=node_tags)
-            else:
-                border_w = 4 if is_slc else (1 if node_obj.is_entity else 2)
-                outline_color = "#4a90e2" if is_slc else "#58180d"
-                self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, 
-                                        fill=bg_color, outline=outline_color, width=border_w, tags=node_tags)
-            # --- FIXED: UNNESTED OUTSIDE THE IF/ELSE GEOMETRY CHECKER ---
             dx_sum, dy_sum = 0, 0
             for neighbor in G.neighbors(node_id):
                 if neighbor not in visible_nodes: continue
-                nx_c, ny_c = self.node_centers[neighbor]
-                ndx, ndy = nx_c - center_x, ny_c - center_y
-                dist = math.hypot(ndx, ndy) or 1
+                nx_c, ny_c = self.node_centers[neighbor]; ndx, ndy = nx_c - center_x, ny_c - center_y; dist = math.hypot(ndx, ndy) or 1
                 dx_sum += ndx / dist; dy_sum += ndy / dist
             for predecessor in G.predecessors(node_id):
                 if predecessor not in visible_nodes: continue
@@ -3062,8 +3012,7 @@ class MapGraphRenderer(tk.Frame):
             text_x, text_y = center_x, (center_y - text_offset if dy_sum >= 0 else center_y + text_offset)
             text_anchor = tk.S if dy_sum >= 0 else tk.N  
 
-            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", font_size, "bold", "underline"), 
-                                      fill=bg_color, width=int(150*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
+            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", font_size, "bold", "underline"), fill="#4a90e2", width=int(150*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
             self.canvas.tag_bind(text_id, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
             self.canvas.tag_bind(text_id, "<Leave>", lambda e: self.canvas.config(cursor=""))
             
@@ -3146,39 +3095,31 @@ class MapGraphRenderer(tk.Frame):
         
         if self.current_mode == "edge":
             if self._edge_start_node is None:
-                self._edge_start_node = node_id
-                self.draw_graph()  # FIXED: Call draw_graph instead of itemconfig
+                self._edge_start_node = node_id; self.canvas.itemconfig(item, outline="#4a90e2", width=4)
             else:
                 if self._edge_start_node != node_id: self._create_edge_connection(self._edge_start_node, node_id)
                 self._edge_start_node = None; self.current_mode = "select"; self.draw_graph()
             return "break"
-        
         elif self.current_mode == "parent":
             if self._edge_start_node is None:
-                self._edge_start_node = node_id
-                self.draw_graph()  # FIXED: Call draw_graph instead of itemconfig
+                self._edge_start_node = node_id; self.canvas.itemconfig(item, outline="#4a90e2", width=4)
             else:
                 if self._edge_start_node != node_id: self._create_parent_child_relation(self._edge_start_node, node_id)
                 self._edge_start_node = None; self.current_mode = "select"; self.draw_graph()
             return "break"
-            
         elif self.current_mode == "new":
             self._new_node_parent_id = None if self._new_node_parent_id == node_id else node_id
             self.draw_graph(); return "break"
-            
         elif self.current_mode == "delete":
             self._delete_node(node_id); self.current_mode = "select"; return "break"
-            
         else: 
             self._drag_node_id = node_id; self._drag_start_x = self.canvas.canvasx(event.x); self._drag_start_y = self.canvas.canvasy(event.y)
             self._is_panning = False; self.selected_edge_id = None  
-            
             if self.selected_node_id == node_id:
-                self.selected_node_id = None
+                self.selected_node_id = None; info = self.nodes_map.get(node_id); b_w = 1 if info and info["node"].is_entity else 2
+                self.canvas.itemconfig(item, outline="#58180d", width=b_w)
             else:
-                self.selected_node_id = node_id
-                
-            #self.draw_graph()  # FIXED: Redraw canvas to update selections cleanly
+                self.selected_node_id = node_id; self.canvas.itemconfig(item, outline="#4a90e2", width=4)
             return "break"
 
     def _on_node_motion(self, event):
@@ -3201,23 +3142,11 @@ class MapGraphRenderer(tk.Frame):
                     tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
                     end_x = vx - (tdx / t_length) * p if t_length > p else vx
                     end_y = vy - (tdy / t_length) * p if t_length > p else vy
-                    
-                    # MODIFICATION: Re-calculate padded start positioning for curved motion adjustments
-                    fdx, fdy = ctrl_x - ux, ctrl_y - uy
-                    f_length = math.hypot(fdx, fdy) or 1
-                    start_x = ux + (fdx / f_length) * p if f_length > p else ux
-                    start_y = uy + (fdy / f_length) * p if f_length > p else uy
-                    
-                    self.canvas.coords(edge["id"], start_x, start_y, ctrl_x, ctrl_y, end_x, end_y)
+                    self.canvas.coords(edge["id"], ux, uy, ctrl_x, ctrl_y, end_x, end_y)
                 else:
                     end_x = vx - (lx / length) * p if length > p else vx
                     end_y = vy - (ly / length) * p if length > p else vy
-                    
-                    # MODIFICATION: Re-calculate padded start positioning for straight motion adjustments
-                    start_x = ux + (lx / length) * p if length > p else ux
-                    start_y = uy + (ly / length) * p if length > p else uy
-                    
-                    self.canvas.coords(edge["id"], start_x, start_y, end_x, end_y)
+                    self.canvas.coords(edge["id"], ux, uy, end_x, end_y)
         self._drag_start_x, self._drag_start_y = cur_x, cur_y; self._update_scroll_region()
 
     def _on_node_release(self, event):
@@ -3288,14 +3217,6 @@ class MapGraphRenderer(tk.Frame):
     def _create_parent_child_relation(self, parent_id, child_id):
         import shutil
         old_child_path = Path(child_id); new_child_path = Path(parent_id) / old_child_path.name
-
-        if parent_id == child_id or Path(parent_id).resolve() == Path(child_id).resolve():
-            messagebox.showerror("Error", "A map node entity cannot become its own parent destination.")
-            return "break"
-        if Path(child_id).resolve() in Path(parent_id).resolve().parents:
-            messagebox.showerror("Error", "Cycle detected: A map node cannot be nested inside one of its own descendants.")
-            return "break"
-            
         if new_child_path.exists(): messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists inside that parent."); return
         try:
             shutil.move(str(old_child_path), str(new_child_path)); toplevel = self.winfo_toplevel()
@@ -3307,102 +3228,42 @@ class MapGraphRenderer(tk.Frame):
 
     def _handle_canvas_new_node_creation(self, parent_path, cx, cy):
         title = "Add Location" if self.mode == "location" else "Add Event"
-        lbl_text = "Location Name:" if self.mode == "location" else "Event Name:"
-        default_icon_path = Path("assets/icons/location_icons/default.png") if self.mode == "location" else Path("assets/icons/events_icons/default.png")
+        prompt = "Location name:" if self.mode == "location" else "Event name:"
+        fn = simpledialog.askstring(title, prompt)
+        if not fn or not fn.strip(): return
+        sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+        nd = parent_path / sn; nd.mkdir(parents=True, exist_ok=True)
         
-        dialog = tk.Toplevel(self)
-        dialog.title(title)
-        dialog.geometry("400x220")
-        dialog.configure(bg="#fdf1dc")
-        
-        # CHANGE: Extract pointer location on the display to place layout next to cursor
-        mx, my = self.winfo_pointerxy()
-        dialog.geometry(f"400x220+{mx + 10}+{my + 10}")
-        
-        dialog.transient(self)
-        dialog.grab_set()
-        
-        chosen_icon_path = [default_icon_path]
-        
-        f_row = tk.Frame(dialog, bg="#fdf1dc")
-        f_row.pack(fill=tk.X, padx=15, pady=15)
-        tk.Label(f_row, text=lbl_text, font=("Georgia", 11, "bold"), bg="#fdf1dc", fg="black").pack(side=tk.LEFT, padx=(0, 10))
-        name_ent = tk.Entry(f_row, font=("Arial", 11), bd=1, relief=tk.SOLID)
-        name_ent.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        i_row = tk.Frame(dialog, bg="#fdf1dc")
-        i_row.pack(fill=tk.X, padx=15, pady=5)
-        tk.Label(i_row, text="Node Icon:", font=("Georgia", 11, "bold"), bg="#fdf1dc", fg="black").pack(side=tk.LEFT, padx=(0, 10))
-        
-        img_lbl = tk.Label(i_row, bg="#fae6c5", bd=1, relief=tk.SOLID, cursor="hand2")
-        img_lbl.pack(side=tk.LEFT)
-        
-        def update_preview_icon(p_path):
+        icon_file = "map_icon.png" if self.mode == "location" else "event_icon.png"
+        if Path(f"./utils/{icon_file}").exists():
             try:
-                if not Path(p_path).exists():
-                    Path(p_path).parent.mkdir(parents=True, exist_ok=True)
-                    src_fallback = Path("./assets/icons/map_icon.png") if self.mode == "location" else Path("./assets/icons/event_icon.png")
-                    if src_fallback.exists(): shutil.copy(str(src_fallback), str(p_path))
-                pil_img = Image.open(p_path)
-                pil_img.thumbnail((32, 32))
-                tk_img = ImageTk.PhotoImage(pil_img)
-                img_lbl.configure(image=tk_img)
-                img_lbl.image = tk_img
-            except:
-                img_lbl.configure(text="Pick Icon", font=("Arial", 9), padx=5, pady=5)
-                
-        update_preview_icon(chosen_icon_path[0])
-        
-        def choose_icon_action():
-            def on_choice(path):
-                chosen_icon_path[0] = Path(path)
-                update_preview_icon(path)
-            from dialogs import NodeIconSelectorDialog
-            NodeIconSelectorDialog(dialog, self.mode, on_choice)
+                from PIL import Image
+                img = Image.open(f"./utils/{icon_file}"); img.thumbnail((64, 64)); img.save(nd / f"{sn}.png", "PNG")
+            except: pass
             
-        img_lbl.bind("<Button-1>", lambda e: choose_icon_action())
-        tk.Button(i_row, text="Change...", font=("Arial", 9), command=choose_icon_action).pack(side=tk.LEFT, padx=10)
-        
-        def on_confirm():
-            fn = name_ent.get().strip()
-            if not fn: return
-            sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
-            nd = parent_path / sn
-            if nd.exists():
-                messagebox.showerror("Error", "A node path configuration conflict exists.")
-                return
-            nd.mkdir(parents=True, exist_ok=True)
-            
-            if chosen_icon_path[0].exists():
-                try: shutil.copy(str(chosen_icon_path[0]), str(nd / f"{sn}.png"))
-                except Exception as e: print(f"Asset directory copy failed: {e}")
-                    
-            active_layers = sorted(list(self.visible_layers)) if self.visible_layers else [0]
-            stat_json = nd / f"{sn}.json"
-            default_data = {"name": fn, "description": "", "monsters": [], "npcs": [], "combats": [], "events" if self.mode == "location" else "locations": [], "objects": [], "connections": [], self.data_key: active_layers}
+        active_layers = sorted(list(self.visible_layers)) if self.visible_layers else [0]
+        stat_json = nd / f"{sn}.json"
+        default_data = {"name": fn, "description": "", "monsters": [], "npcs": [], "combats": [], "events" if self.mode == "location" else "locations": [], "objects": [], "connections": [], self.data_key: active_layers}
+        try:
             with open(stat_json, "w", encoding="utf-8") as f: json.dump(default_data, f, indent=4)
-                
-            current_width = max(100, self.canvas.winfo_width())
-            sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
-            zl = self.zoom_level if self.zoom_level > 0 else 1.0
-            base_x, base_y = int(round(cx / (sf * zl))), int(round(cy / (sf * zl)))
-            
-            saved_nodes = {}
-            if self.layout_path.exists():
-                try:
-                    with open(self.layout_path, "r", encoding="utf-8") as f: saved_nodes = json.load(f).get("nodes", {})
-                except: pass
-            saved_nodes[str(nd)] = {"x": base_x, "y": base_y}
+        except Exception as e: print(f"Failed to write schema JSON data payload: {e}")
+
+        current_width = max(100, self.canvas.winfo_width())
+        sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
+        zl = self.zoom_level if self.zoom_level > 0 else 1.0
+        base_x, base_y = int(round(cx / (sf * zl))), int(round(cy / (sf * zl)))
+        
+        saved_nodes = {}
+        if self.layout_path.exists():
+            try:
+                with open(self.layout_path, "r", encoding="utf-8") as f: ld = json.load(f); saved_nodes = ld.get("nodes", {})
+            except: pass
+        saved_nodes[str(nd)] = {"x": base_x, "y": base_y}
+        try:
             with open(self.layout_path, "w", encoding="utf-8") as f: json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
-                
-            toplevel = self.winfo_toplevel()
-            if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
-            dialog.destroy()
-            self.current_mode = "select"
-            self.draw_graph()
-            
-        tk.Button(dialog, text="Confirm & Create", font=("Arial", 10, "bold"), bg="#2ecc71", fg="white", command=on_confirm).pack(side=tk.BOTTOM, pady=15)
-        dialog.wait_window()
+        except Exception as e: print(f"Failed to record layout node position variables: {e}")
+        toplevel = self.winfo_toplevel()
+        if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
 
     def _delete_node(self, node_id):
         info = self.nodes_map.get(node_id)
@@ -3614,72 +3475,3 @@ class MapGraphRenderer(tk.Frame):
         try:
             with open(self.terrain_path, "w", encoding="utf-8") as f: json.dump(self.compressed_rects, f, indent=4)
         except Exception as e: print(f"Failed landscape structural data serialization: {e}")
-
-    def _get_node_icon_image(self, node_id):
-        """Fetches hardware-optimized visual pointers from memory cache, 
-        with automatic fallback to default profile assets.
-        """
-        cache_key = (node_id, self.zoom_level)
-        if hasattr(self, "_icon_image_cache") and cache_key in self._icon_image_cache:
-            return self._icon_image_cache[cache_key]
-            
-        if not hasattr(self, "_icon_image_cache"):
-            self._icon_image_cache = {}
-            
-        img_path = None
-        node_path = Path(node_id)
-        if node_path.exists() and node_path.is_dir():
-            pngs = list(node_path.glob("*.png"))
-            if pngs:
-                img_path = pngs[0]
-                
-        if not img_path:
-            # Fall back to root custom dashboard asset pointers
-            if self.mode == "location":
-                img_path = Path("./assets/icons/map_icon.png")
-            else:
-                img_path = Path("./assets/icons/event_icon.png")
-                
-        if not img_path.exists():
-            return None # Graceful safety block if files are missing entirely
-            
-        try:
-            pil_img = Image.open(img_path)
-            size = max(10, int(32 * self.zoom_level))
-            
-            # FIXED: Changed from LANCEZOS to LANCZOS to resolve the cache compilation error loop
-            pil_img = pil_img.resize((size, size), Image.Resampling.BILINEAR)
-            
-            tk_img = ImageTk.PhotoImage(pil_img)
-            self._icon_image_cache[cache_key] = tk_img
-            return tk_img
-        except Exception as e:
-            print(f"Error compiling visual image resource cache: {e}")
-            return None
-
-    def open_node_icon_selector(self):
-        """Launches the custom icon dashboard panel and copies choices to disk."""
-        if not self.selected_node_id:
-            messagebox.showinfo("Selection Required", "Please select a node on the canvas layout first.")
-            return
-            
-        def on_icon_chosen(chosen_path):
-            node_dir = Path(self.selected_node_id)
-            if node_dir.exists() and node_dir.is_dir():
-                # Purge historical items to prevent overlap drift anomalies
-                for old_png in node_dir.glob("*.png"):
-                    try: old_png.unlink()
-                    except: pass
-                
-                dest_path = node_dir / f"{node_dir.name}.png"
-                try:
-                    shutil.copy(str(chosen_path), str(dest_path))
-                    if hasattr(self, "_icon_image_cache"):
-                        self._icon_image_cache.clear() # Force redrawing fresh graphics
-                    self.draw_graph()
-                except Exception as e:
-                    messagebox.showerror("Error", f"Failed updating node custom asset icon: {e}")
-                    
-        NodeIconSelectorDialog(self, self.mode, on_icon_chosen)
-
-

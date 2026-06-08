@@ -1,4 +1,7 @@
 import re
+import requests
+import json
+from pathlib import Path
 
 # ==================== CONSTANTS & TRANSLATION MAPS ====================
 SCHOOL_MAP = {

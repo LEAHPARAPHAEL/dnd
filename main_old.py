@@ -7,7 +7,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from pathlib import Path
 from PIL import Image, ImageTk
 
-import utils
+import utils.preprocess as preprocess
 import downloader
 from models import Node
 from stat_renderer import StatBlockRenderer, CombatRenderer, AutoHeightText, MapGraphRenderer
@@ -91,7 +91,7 @@ class DnDStatManager(tk.Tk):
         except: pass
 
         # Guard rail checking loop for main text entries (Preserves original background layout protections)
-        if isinstance(event.widget, AutoHeightText): return
+        #if isinstance(event.widget, AutoHeightText): return
         
         try:
             hovered_widget = event.widget
@@ -576,7 +576,7 @@ class DnDStatManager(tk.Tk):
                     if b in ["AND", "OR", "(", ")"]: expr += f" {b.lower()} "
                     else:
                         match = True
-                        if b["type"] == "cr" and (utils.parse_cr(m.get("cr", "0")) < b["min"] or utils.parse_cr(m.get("cr", "0")) > b["max"]): match = False
+                        if b["type"] == "cr" and (preprocess.parse_cr(m.get("cr", "0")) < b["min"] or preprocess.parse_cr(m.get("cr", "0")) > b["max"]): match = False
                         elif b["type"] == "size" and m.get("size") != b["val"]: match = False
                         elif b["type"] == "type" and b["val"].lower() not in m.get("type", "").lower(): match = False
                         elif b["type"] == "align" and b["val"].lower() not in m.get("alignment", "").lower(): match = False
@@ -610,7 +610,7 @@ class DnDStatManager(tk.Tk):
                     if not eval(expr): continue
                 except: pass
             tag = "evenrow" if count % 2 == 0 else "oddrow"
-            self.spell_tree.insert("", tk.END, values=(s["name"], "Cantrip" if s.get("level", 0) == 0 else str(s.get("level", 0)), utils.SCHOOL_MAP.get(s.get("school", ""), "Unknown"), s.get("source", "Unknown")), tags=(tag,))
+            self.spell_tree.insert("", tk.END, values=(s["name"], "Cantrip" if s.get("level", 0) == 0 else str(s.get("level", 0)), preprocess.SCHOOL_MAP.get(s.get("school", ""), "Unknown"), s.get("source", "Unknown")), tags=(tag,))
             count += 1
 
     def open_monster_filter_dialog(self):
@@ -660,7 +660,7 @@ class DnDStatManager(tk.Tk):
             w = cls(f, **kw); w.grid(row=row_idx, column=1, pady=8, sticky="w"); row_idx += 1; return w
         min_v = factory("Minimum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180)
         max_v = factory("Maximum Level:", tk.Scale, from_=0, to=12, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180); max_v.set(12)
-        school_options = ["All"] + list(utils.SCHOOL_MAP.values())
+        school_options = ["All"] + list(preprocess.SCHOOL_MAP.values())
         sch_v = factory("School:", ttk.Combobox, values=school_options, state="readonly", width=22); sch_v.set("All")
         dmg_v = factory("Damage Type:", ttk.Combobox, values=["All", "Acid", "Bludgeoning", "Cold", "Fire", "Force", "Lightning", "Necrotic", "Piercing", "Poison", "Psychic", "Radiant", "Slashing", "Thunder"], state="readonly", width=22); dmg_v.set("All")
         save_v = factory("Saving Throw:", ttk.Combobox, values=["All", "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"], state="readonly", width=22); save_v.set("All")
@@ -668,7 +668,7 @@ class DnDStatManager(tk.Tk):
         def apply_f():
             filters = []
             if min_v.get() > 0 or max_v.get() < 12: filters.append({"type": "level", "min": min_v.get(), "max": max_v.get()})
-            if sch_v.get() != "All": filters.append({"type": "school", "val": utils.INV_SCHOOL_MAP[sch_v.get()]})
+            if sch_v.get() != "All": filters.append({"type": "school", "val": preprocess.INV_SCHOOL_MAP[sch_v.get()]})
             if dmg_v.get() != "All": filters.append({"type": "damage", "val": dmg_v.get().lower()})
             if save_v.get() != "All": filters.append({"type": "save", "val": save_v.get().lower()})
             if conc_v.get() != "All": filters.append({"type": "concentration", "val": conc_v.get() == "Yes"})
@@ -791,11 +791,11 @@ class DnDStatManager(tk.Tk):
         g_dir = self.combats_dir / safe; g_dir.mkdir(parents=True, exist_ok=True)
         c_data = {"name": safe, "location": "Any", "time": "Any", "description": "None", "over": "No", "outcome": "None", "participants": []}
         t_json = g_dir / f"{safe}.json"; json.dump(c_data, open(t_json, "w", encoding="utf-8"), indent=4)
-        if Path("./utils/combat_icon.png").exists():
+        if Path("./assets/icons/combat_icon.png").exists():
             try:
-                shutil.copy(Path("./utils/combat_icon.png"), g_dir / "portrait.png")
-                Image.open(Path("./utils/combat_icon.png")).thumbnail((64, 64))
-                Image.open(Path("./utils/combat_icon.png")).save(g_dir / "icon.webp", "WEBP")
+                shutil.copy(Path("./assets/icons/combat_icon.png"), g_dir / "portrait.png")
+                Image.open(Path("./assets/icons/combat_icon.png")).thumbnail((64, 64))
+                Image.open(Path("./assets/icons/combat_icon.png")).save(g_dir / "icon.webp", "WEBP")
             except: pass
         self.refresh_tree_silent()
         self.open_page(Node(name=safe, path=g_dir, is_entity=True, level=1, stat_path=t_json), view_type="combat", stat_path=t_json, is_reference_click=False)
@@ -848,11 +848,11 @@ class DnDStatManager(tk.Tk):
         g_dir = self.npcs_dir / safe; g_dir.mkdir(parents=True, exist_ok=True)
         nd = {"name": safe, "source": "Custom", "level": 1, "size": ["M"], "type": "humanoid", "alignment": ["N"], "ac": [10], "hp": {"average": 4, "formula": "1d8"}, "speed": {"walk": 30}, "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10, "action": [{"name": "Unarmed Strike", "entries": ["{@atk mw} {@hit 2} to hit, reach 5 ft., one target. {@h}1 bludgeoning damage."]}]}
         t_json = g_dir / f"{safe}.json"; json.dump(nd, open(t_json, "w", encoding="utf-8"), indent=4)
-        if Path("./utils/default_npc.png").exists():
+        if Path("./assets/icons/default_npc.png").exists():
             try:
-                Image.open("./utils/default_npc.png").save(g_dir / "portrait.png", "PNG")
-                Image.open("./utils/default_npc.png").thumbnail((64, 64))
-                Image.open("./utils/default_npc.png").save(g_dir / "icon.webp", "WEBP")
+                Image.open("./assets/icons/default_npc.png").save(g_dir / "portrait.png", "PNG")
+                Image.open("./assets/icons/default_npc.png").thumbnail((64, 64))
+                Image.open("./assets/icons/default_npc.png").save(g_dir / "icon.webp", "WEBP")
             except: pass
         self.refresh_tree_silent()
         self.open_page(Node(name=safe, path=g_dir, is_entity=True, level=1, stat_path=t_json), view_type="npc", stat_path=t_json, is_reference_click=False)
@@ -902,8 +902,8 @@ class DnDStatManager(tk.Tk):
         if not fn or not fn.strip(): return
         sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
         nd = p_path / sn; nd.mkdir(parents=True, exist_ok=True)
-        if Path("./utils/map_icon.png").exists():
-            try: Image.open("./utils/map_icon.png").thumbnail((64,64)); Image.open("./utils/map_icon.png").save(nd / f"{sn}.png", "PNG")
+        if Path("./assets/icons/map_icon.png").exists():
+            try: Image.open("./assets/icons/map_icon.png").thumbnail((64,64)); Image.open("./assets/icons/map_icon.png").save(nd / f"{sn}.png", "PNG")
             except: pass
         self._set_node_open(p_path, True); self.refresh_tree_silent()
         
@@ -917,19 +917,19 @@ class DnDStatManager(tk.Tk):
         
     def refresh_tree_silent(self):
         op = self._get_open_paths(getattr(self, 'nodes', []))
-        m_n = Node(name="Map", path=self.map_dir, is_entity=False, level=0, icon_path=Path("./utils/map.png") if Path("./utils/map.png").exists() else None, is_open=str(self.map_dir) in op)
+        m_n = Node(name="Map", path=self.map_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/map.png") if Path("./assets/icons/map.png").exists() else None, is_open=str(self.map_dir) in op)
         m_n.children = self.build_tree_model(self.map_dir, level=1, open_paths=op)
-        e_n = Node(name="Events", path=self.events_dir, is_entity=False, level=0, icon_path=Path("./utils/events.png") if Path("./utils/events.png").exists() else None, is_open=str(self.events_dir) in op)
+        e_n = Node(name="Events", path=self.events_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/events.png") if Path("./assets/icons/events.png").exists() else None, is_open=str(self.events_dir) in op)
         e_n.children = self.build_tree_model(self.events_dir, level=1, open_paths=op)
-        s_n = Node(name="Spells", path=self.spells_dir, is_entity=False, level=0, icon_path=Path("./utils/spell.png") if Path("./utils/spell.png").exists() else None, is_open=str(self.spells_dir) in op)
+        s_n = Node(name="Spells", path=self.spells_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/spell.png") if Path("./assets/icons/spell.png").exists() else None, is_open=str(self.spells_dir) in op)
         s_n.children = self.build_tree_model(self.spells_dir, level=1, open_paths=op)
-        mo_n = Node(name="Monsters", path=self.monsters_dir, is_entity=False, level=0, icon_path=Path("./utils/monster.png") if Path("./utils/monster.png").exists() else None, is_open=str(self.monsters_dir) in op)
+        mo_n = Node(name="Monsters", path=self.monsters_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/monster.png") if Path("./assets/icons/monster.png").exists() else None, is_open=str(self.monsters_dir) in op)
         mo_n.children = self.build_tree_model(self.monsters_dir, level=1, open_paths=op)
-        n_n = Node(name="NPCs", path=self.npcs_dir, is_entity=False, level=0, icon_path=Path("./utils/npc.png") if Path("./utils/npc.png").exists() else None, is_open=str(self.npcs_dir) in op)
+        n_n = Node(name="NPCs", path=self.npcs_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/npc.png") if Path("./assets/icons/npc.png").exists() else None, is_open=str(self.npcs_dir) in op)
         n_n.children = self.build_tree_model(self.npcs_dir, level=1, open_paths=op)
-        c_n = Node(name="Combats", path=self.combats_dir, is_entity=False, level=0, icon_path=Path("./utils/combat.png") if Path("./utils/combat.png").exists() else None, is_open=str(self.combats_dir) in op)
+        c_n = Node(name="Combats", path=self.combats_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/combat.png") if Path("./assets/icons/combat.png").exists() else None, is_open=str(self.combats_dir) in op)
         c_n.children = self.build_tree_model(self.combats_dir, level=1, open_paths=op)
-        o_n = Node(name="Objects", path=self.objects_dir, is_entity=False, level=0, icon_path=Path("./utils/objects.png") if Path("./utils/objects.png").exists() else None, is_open=str(self.objects_dir) in op)
+        o_n = Node(name="Objects", path=self.objects_dir, is_entity=False, level=0, icon_path=Path("./assets/icons/objects.png") if Path("./assets/icons/objects.png").exists() else None, is_open=str(self.objects_dir) in op)
         o_n.children = self.build_tree_model(self.objects_dir, level=1, open_paths=op)
         self.nodes = [m_n, e_n, o_n, s_n, mo_n, n_n, c_n]; self.render_tree()
 
@@ -942,7 +942,7 @@ class DnDStatManager(tk.Tk):
 
         for item in files:
             if self.map_dir in item.parents or item.parent == self.map_dir or self.events_dir in item.parents or item.parent == self.events_dir: continue
-            icon = Path("./utils/object_icon.png") if item.parent == self.objects_dir else Path("./utils/spell_icon.png")
+            icon = Path("./assets/icons/object_icon.png") if item.parent == self.objects_dir else Path("./assets/icons/spell_icon.png")
             nodes.append(Node(name=item.stem, path=item, is_entity=True, level=level, icon_path=icon if icon.exists() else None, stat_path=item))
 
         for item in dirs:
@@ -951,23 +951,32 @@ class DnDStatManager(tk.Tk):
             if jsons and not is_map and not is_evt:
                 nodes.append(Node(name=item.name, path=item, is_entity=True, level=level, icon_path=webps[0] if webps else None, stat_path=jsons[0]))
             else:
-                icon_name = 'monster' if item==self.monsters_dir else 'npc' if item==self.npcs_dir else 'combat' if item==self.combats_dir else 'map_icon' if is_map else 'event_icon'
-                icon_path = Path(f"./utils/{icon_name}.png")
-                if not icon_path.exists():
+                icon_path = None
+                if is_map or is_evt:
                     for ext in ['.png', '.webp', '.jpg']:
-                        if (item / f"{item.name}{ext}").exists(): 
+                        if (item / f"{item.name}{ext}").exists():
                             icon_path = item / f"{item.name}{ext}"
                             break
+        
+                # Fall back to global system default assets if no custom path icon is detected
+                if not icon_path or not icon_path.exists():
+                    icon_name = 'monster' if item==self.monsters_dir else 'npc' if item==self.npcs_dir else 'combat' if item==self.combats_dir else 'map_icon' if is_map else 'event_icon'
+                    icon_path = Path(f"./assets/icons/{icon_name}.png")
+                    if not icon_path.exists():
+                        for ext in ['.png', '.webp', '.jpg']:
+                            if (item / f"{item.name}{ext}").exists(): 
+                                icon_path = item / f"{item.name}{ext}"
+                                break
                 node = Node(name=item.name, path=item, is_entity=False, level=level, icon_path=icon_path if icon_path.exists() else None, is_open=str(item) in open_paths)
                 if is_map or is_evt:
                     if (item / f"{item.name}.json").exists(): node.stat_path = item / f"{item.name}.json"
                 node.children = self.build_tree_model(item, level + 1, open_paths); nodes.append(node)
 
         for key, act in [("monsters", "new_monster"), ("npcs", "new_npc"), ("combats", "new_combat"), ("spells", "new_spell")]:
-            if path == getattr(self, f"{key}_dir"): nodes.append(Node(name="New", path=path, is_entity=False, level=level, action_type=act, icon_path=Path("./utils/new.png")))
-        if path == self.map_dir or self.map_dir in path.parents: nodes.append(Node(name="Add Location", path=path, is_entity=False, level=level, action_type="new_location", icon_path=Path("./utils/new.png")))
-        elif path == self.events_dir or self.events_dir in path.parents: nodes.append(Node(name="Add Event", path=path, is_entity=False, level=level, action_type="new_event", icon_path=Path("./utils/new.png")))
-        elif path == self.objects_dir: nodes.append(Node(name="Add Object", path=path, is_entity=False, level=level, action_type="new_object", icon_path=Path("./utils/new.png")))
+            if path == getattr(self, f"{key}_dir"): nodes.append(Node(name="New", path=path, is_entity=False, level=level, action_type=act, icon_path=Path("./assets/icons/new.png")))
+        if path == self.map_dir or self.map_dir in path.parents: nodes.append(Node(name="Add Location", path=path, is_entity=False, level=level, action_type="new_location", icon_path=Path("./assets/icons/new.png")))
+        elif path == self.events_dir or self.events_dir in path.parents: nodes.append(Node(name="Add Event", path=path, is_entity=False, level=level, action_type="new_event", icon_path=Path("./assets/icons/new.png")))
+        elif path == self.objects_dir: nodes.append(Node(name="Add Object", path=path, is_entity=False, level=level, action_type="new_object", icon_path=Path("./assets/icons/new.png")))
         return nodes
 
     def render_tree(self):
@@ -1094,8 +1103,8 @@ class DnDStatManager(tk.Tk):
         if not fn or not fn.strip(): return
         sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
         nd = p_path / sn; nd.mkdir(parents=True, exist_ok=True)
-        if Path("./utils/event_icon.png").exists():
-            try: Image.open("./utils/event_icon.png").thumbnail((64,64)); Image.open("./utils/event_icon.png").save(nd / f"{sn}.png", "PNG")
+        if Path("./assets/icons/event_icon.png").exists():
+            try: Image.open("./assets/icons/event_icon.png").thumbnail((64,64)); Image.open("./assets/icons/event_icon.png").save(nd / f"{sn}.png", "PNG")
             except: pass
         self._set_node_open(p_path, True); self.refresh_tree_silent()
         

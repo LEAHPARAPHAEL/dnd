@@ -3,9 +3,11 @@ from tkinter import font, ttk, messagebox, simpledialog
 import re
 import json
 import copy
-import utils
-from dialogs import SpellSearchDialog, DepthsSelectionDialog, TerrainSettingsDialog
+import utils.preprocess as preprocess
+from dialogs import SpellSearchDialog, DepthsSelectionDialog, TerrainSettingsDialog, NodeIconSelectorDialog
 from pathlib import Path
+from PIL import Image, ImageTk
+import shutil
 
 # ==================== CONDITIONS DATABASE ====================
 CONDITIONS_DB = {
@@ -31,7 +33,7 @@ def clean_5etools_text_with_conditions(text):
         return text
     # Intercept condition references and wrap into condition tags before 5etools utility standardizes them
     text = re.sub(r'{@condition ([^|}]+)[^}]*}', r'«CONDITION:\1»', text, flags=re.IGNORECASE)
-    return utils.clean_5etools_text(text)
+    return preprocess.clean_5etools_text(text)
 
 
 class AutoHeightText(tk.Text):
@@ -189,6 +191,17 @@ class StatBlockRenderer(tk.Frame):
         self._setup_fonts_and_tags()
         self.v_scroll.config(command=self.text.yview)
         self.text.bind("<Configure>", lambda e: [div.configure(width=max(10, e.width - 80)) for div in self.dividers if div.winfo_exists()])
+
+        def redirect_scroll_to_popup(event):
+            if hasattr(self, "_hover_popup") and self._hover_popup and self._hover_popup.winfo_exists():
+                units = -2 if event.num == 4 else 2 if event.num == 5 else -1 * (event.delta // 40)
+                if hasattr(self._hover_popup, 'target_text_widget') and self._hover_popup.target_text_widget.winfo_exists():
+                    self._hover_popup.target_text_widget.yview_scroll(units, "units")
+                return "break"  # Prevents the main text page from scrolling
+                
+        self.text.bind("<MouseWheel>", redirect_scroll_to_popup)
+        self.text.bind("<Button-4>", redirect_scroll_to_popup)
+        self.text.bind("<Button-5>", redirect_scroll_to_popup)
 
     def set_spell_callback(self, cb): self.spell_callback = cb
     def set_spells_index(self, idx): self.spells_index = idx
@@ -430,9 +443,9 @@ class StatBlockRenderer(tk.Frame):
         self.edit_ability_refs = {}
         for i, stat in enumerate(["str", "dex", "con", "int", "wis", "cha"]):
             tk.Label(abilities_frame, text=stat.upper(), bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=i+1, padx=5)
-            v_en = AutoHeightText(abilities_frame, canvas_to_refresh=self.edit_canvas, width=6, font=self.body_font, bd=1, relief=tk.SOLID); v_en.insert(0, str(self.edit_data.get(stat, 10))); v_en.grid(row=1, column=i+1, padx=5, pady=2)
-            m_en = AutoHeightText(abilities_frame, canvas_to_refresh=self.edit_canvas, width=6, font=self.body_font, bd=1, relief=tk.SOLID); m_en.insert(0, str(self.edit_data.get("modOverride", {}).get(stat, ""))); m_en.grid(row=2, column=i+1, padx=5, pady=2)
-            s_en = AutoHeightText(abilities_frame, canvas_to_refresh=self.edit_canvas, width=6, font=self.body_font, bd=1, relief=tk.SOLID); s_en.insert(0, str(self.edit_data.get("save", {}).get(stat, ""))); s_en.grid(row=3, column=i+1, padx=5, pady=2)
+            v_en = tk.Entry(abilities_frame, width=6, font=self.body_font, bd=1, relief=tk.SOLID); v_en.insert(0, str(self.edit_data.get(stat, 10))); v_en.grid(row=1, column=i+1, padx=5, pady=2)
+            m_en = tk.Entry(abilities_frame, width=6, font=self.body_font, bd=1, relief=tk.SOLID); m_en.insert(0, str(self.edit_data.get("modOverride", {}).get(stat, ""))); m_en.grid(row=2, column=i+1, padx=5, pady=2)
+            s_en = tk.Entry(abilities_frame, width=6, font=self.body_font, bd=1, relief=tk.SOLID); s_en.insert(0, str(self.edit_data.get("save", {}).get(stat, ""))); s_en.grid(row=3, column=i+1, padx=5, pady=2)
             self.edit_ability_refs[stat] = (v_en, m_en, s_en)
 
         self.arrays_frame = tk.Frame(self.edit_inner, bg="#fdf1dc"); self.arrays_frame.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -722,7 +735,7 @@ class StatBlockRenderer(tk.Frame):
         self._render_campaign_node_edit(data, False, save_callback, cancel_callback, {"dir": event_dir, "new_mon": add_new_monster_cb, "exist_mon": add_existing_monster_cb, "exist_npc": add_existing_npc_cb, "exist_combat": add_existing_combat_cb, "exist_alt": add_existing_location_cb, "exist_obj": add_existing_object_cb, "add_conn": add_connection_cb})
 
     def build_array_section(self, key, title, rebuild_all_sc, sync_all_sc):
-        import utils
+        import utils.preprocess as preprocess
         sec_frame = tk.Frame(self.arrays_frame, bg="#fdf1dc", pady=10)
         sec_frame.pack(fill=tk.X)
         header_frame = tk.Frame(sec_frame, bg="#fdf1dc")
@@ -833,7 +846,7 @@ class StatBlockRenderer(tk.Frame):
                                 
                                 for s_idx, s_name in enumerate(spells_list):
                                     sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
-                                    tk.Label(sf, text=utils.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                    tk.Label(sf, text=preprocess.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
                                     
                                     def make_slots_remover(l=lvl_str, idx=s_idx, target_sc=sc_dict):
                                         sync_all_sc()
@@ -858,7 +871,7 @@ class StatBlockRenderer(tk.Frame):
                             
                             for s_idx, s_name in enumerate(sc_dict["will"]):
                                 sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
-                                tk.Label(sf, text=utils.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                tk.Label(sf, text=preprocess.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
                                 
                                 def make_will_remover(idx=s_idx, target_sc=sc_dict):
                                     sync_all_sc()
@@ -881,7 +894,7 @@ class StatBlockRenderer(tk.Frame):
                                     txt_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor="n")
                                     for s_idx, s_name in enumerate(spells_list):
                                         sf = tk.Frame(txt_wrap, bg="#e8d5b7", padx=4, pady=2, bd=1, relief=tk.RAISED)
-                                        tk.Label(sf, text=utils.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
+                                        tk.Label(sf, text=preprocess.clean_spell_display_name(s_name), bg="#e8d5b7", font=("Arial", 10), fg="black").pack(side=tk.LEFT)
                                         
                                         def make_daily_remover(f=freq, index=s_idx, target_sc=sc_dict):
                                             sync_all_sc()
@@ -993,7 +1006,7 @@ class StatBlockRenderer(tk.Frame):
                     entries_str = entries_str.replace("{@h}", "{@attack_dmg}")
 
             found_atk = "None"
-            for tag, tag_name in utils.INV_ATTACK_TAGS.items():
+            for tag, tag_name in preprocess.INV_ATTACK_TAGS.items():
                 if entries_str.startswith(tag):
                     found_atk = tag_name
                     entries_str = entries_str[len(tag):].lstrip()
@@ -1001,7 +1014,7 @@ class StatBlockRenderer(tk.Frame):
                     
             tk.Label(top, text="Attack Type:", bg="#f5e6ce", font=self.body_bold, fg="black").pack(side=tk.LEFT, padx=(15, 2))
             atk_var = tk.StringVar(value=found_atk)
-            atk_cb = ttk.Combobox(top, textvariable=atk_var, values=list(utils.ATTACK_TAGS.keys()), state="readonly", width=18)
+            atk_cb = ttk.Combobox(top, textvariable=atk_var, values=list(preprocess.ATTACK_TAGS.keys()), state="readonly", width=18)
             atk_cb.pack(side=tk.LEFT, padx=5)
             
             def remove_item():
@@ -1059,11 +1072,11 @@ class StatBlockRenderer(tk.Frame):
             v = en.get().strip()
             d[k] = int(v) if k == "level" and v.isdigit() else json.loads(v) if v.startswith(("{", "[")) else v
         
-        d["size"] = [utils.SIZE_MAP.get(self.size_var.get(), "M")]
-        d["alignment"] = utils.ALIGN_MAP.get(self.align_var.get(), ["N"])
+        d["size"] = [preprocess.SIZE_MAP.get(self.size_var.get(), "M")]
+        d["alignment"] = preprocess.ALIGN_MAP.get(self.align_var.get(), ["N"])
         d["ac"] = [int(self.edit_refs["ac"].get())] if self.edit_refs["ac"].get().isdigit() else [self.edit_refs["ac"].get()]
         hf = self.edit_refs["hp_formula"].get().strip()
-        d["hp"] = {"average": utils.calculate_avg(hf) if hf else 10, "formula": hf}
+        d["hp"] = {"average": preprocess.calculate_avg(hf) if hf else 10, "formula": hf}
 
         ns = {}
         for tv, ve, ce, _ in self.speed_refs:
@@ -1110,10 +1123,10 @@ class StatBlockRenderer(tk.Frame):
             for ne, av, txt, he, re_en, fe, te in items:
                 desc = txt.get("1.0", "end-1c").strip().replace("@attack_hit", f"{{@hit {he.get()}}}").replace("@attack_reach", re_en.get())
                 if fe.get():
-                    dmg = f"{{@h}}{utils.calculate_avg(fe.get())} ({{@damage {fe.get()}}})" if 'd' in fe.get().lower() else f"{{@h}}{fe.get()}"
+                    dmg = f"{{@h}}{preprocess.calculate_avg(fe.get())} ({{@damage {fe.get()}}})" if 'd' in fe.get().lower() else f"{{@h}}{fe.get()}"
                     desc = desc.replace("{@attack_dmg}", f"{dmg} {te.get()} damage." if te.get() else f"{dmg} damage.").replace("..", ".")
                 else: desc = desc.replace("{@attack_dmg}", "")
-                if av.get() != "None": desc = f"{utils.ATTACK_TAGS[av.get()]} {desc}"
+                if av.get() != "None": desc = f"{preprocess.ATTACK_TAGS[av.get()]} {desc}"
                 if ne.get() or desc: pi.append({"name": ne.get(), "entries": json.loads(desc) if desc.startswith("[") else desc.split("\n")})
             if pi: d[k] = pi
             else: d.pop(k, None)
@@ -1181,7 +1194,7 @@ class StatBlockRenderer(tk.Frame):
             grid.grid_columnconfigure(col, weight=1, minsize=60)
             score = data.get(stat, 10)
             mod = data.get("modOverride", {}).get(stat, "")
-            if not mod: mod = utils.calculate_modifier(score)
+            if not mod: mod = preprocess.calculate_modifier(score)
             save_val = data.get("save", {}).get(stat, "")
             if not save_val: save_val = mod 
             if isinstance(save_val, int) or (isinstance(save_val, str) and save_val.lstrip('-').isdigit()):
@@ -1332,21 +1345,21 @@ class StatBlockRenderer(tk.Frame):
             
         if "resist" in data:
             self.text.insert(tk.END, "Damage Resistances: ", "bold")
-            self.text.insert(tk.END, f"{utils.parse_complex_list(data['resist'])}\n", "body")
+            self.text.insert(tk.END, f"{preprocess.parse_complex_list(data['resist'])}\n", "body")
         if "immune" in data:
             self.text.insert(tk.END, "Damage Immunities: ", "bold")
-            self.text.insert(tk.END, f"{utils.parse_complex_list(data['immune'])}\n", "body")
+            self.text.insert(tk.END, f"{preprocess.parse_complex_list(data['immune'])}\n", "body")
         if "conditionImmune" in data:
             self.text.insert(tk.END, "Condition Immunities: ", "bold")
-            self.text.insert(tk.END, f"{utils.parse_complex_list(data['conditionImmune'])}\n", "body")
+            self.text.insert(tk.END, f"{preprocess.parse_complex_list(data['conditionImmune'])}\n", "body")
         if "senses" in data:
-            senses = utils.parse_complex_list(data["senses"])
+            senses = preprocess.parse_complex_list(data["senses"])
             passive = data.get("passive", 10)
             self.text.insert(tk.END, "Senses: ", "bold")
             self.text.insert(tk.END, f"{senses}, passive Perception {passive}\n", "body")
         if "languages" in data:
             self.text.insert(tk.END, "Languages: ", "bold")
-            self.text.insert(tk.END, f"{utils.parse_complex_list(data['languages'])}\n", "body")
+            self.text.insert(tk.END, f"{preprocess.parse_complex_list(data['languages'])}\n", "body")
             
         if "level" in data and data["level"] not in ["", None]:
             self.text.insert(tk.END, "Level: ", "bold")
@@ -1539,8 +1552,8 @@ class StatBlockRenderer(tk.Frame):
             en.insert(0, str(self.edit_data.get(key, ""))); en.grid(row=r, column=1, sticky="w", padx=5, pady=2); self.edit_refs[key] = en
 
         r = 4; tk.Label(base_f, text="School:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
-        self.spell_school_var = tk.StringVar(value=utils.SCHOOL_MAP.get(self.edit_data.get("school", "A"), "Abjuration"))
-        ttk.Combobox(base_f, textvariable=self.spell_school_var, values=list(utils.SCHOOL_MAP.values()), state="readonly", width=15).grid(row=r, column=1, sticky="w", padx=5, pady=2); r+=1
+        self.spell_school_var = tk.StringVar(value=preprocess.SCHOOL_MAP.get(self.edit_data.get("school", "A"), "Abjuration"))
+        ttk.Combobox(base_f, textvariable=self.spell_school_var, values=list(preprocess.SCHOOL_MAP.values()), state="readonly", width=15).grid(row=r, column=1, sticky="w", padx=5, pady=2); r+=1
 
         tm = self.edit_data.get("time", [{}])[0]; tk.Label(base_f, text="Cast Time:", bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="e", padx=5, pady=2)
         tf = tk.Frame(base_f, bg="#fdf1dc"); tf.grid(row=r, column=1, sticky="w", padx=5, pady=2); r+=1
@@ -1582,7 +1595,7 @@ class StatBlockRenderer(tk.Frame):
         d["level"] = int(self.edit_refs["level"].get().strip()) if self.edit_refs["level"].get().strip().isdigit() else 0
         if self.edit_refs["page"].get().strip().isdigit(): d["page"] = int(self.edit_refs["page"].get().strip())
         
-        d["school"] = utils.INV_SCHOOL_MAP.get(self.spell_school_var.get(), "A")
+        d["school"] = preprocess.INV_SCHOOL_MAP.get(self.spell_school_var.get(), "A")
         td = {"number": int(self.t_num_var.get().strip()) if self.t_num_var.get().strip().isdigit() else 1, "unit": self.t_unit_var.get().strip()}
         if self.t_cond_var.get().strip(): td["condition"] = self.t_cond_var.get().strip()
         d["time"] = [td]
@@ -1784,10 +1797,10 @@ class StatBlockRenderer(tk.Frame):
                 for ne, av, txt, he, re_en, fe, te in items:
                     desc = txt.get("1.0", "end-1c").strip().replace("@attack_hit", f"{{@hit {he.get()}}}").replace("@attack_reach", re_en.get())
                     if fe.get():
-                        dmg = f"{{@h}}{utils.calculate_avg(fe.get())} ({{@damage {fe.get()}}})" if 'd' in fe.get().lower() else f"{{@h}}{fe.get()}"
+                        dmg = f"{{@h}}{preprocess.calculate_avg(fe.get())} ({{@damage {fe.get()}}})" if 'd' in fe.get().lower() else f"{{@h}}{fe.get()}"
                         desc = desc.replace("{@attack_dmg}", f"{dmg} {te.get()} damage." if te.get() else f"{dmg} damage.").replace("..", ".")
                     else: desc = desc.replace("{@attack_dmg}", "")
-                    if av.get() != "None": desc = f"{utils.ATTACK_TAGS[av.get()]} {desc}"
+                    if av.get() != "None": desc = f"{preprocess.ATTACK_TAGS[av.get()]} {desc}"
                     if ne.get() or desc: pi.append({"name": ne.get(), "entries": json.loads(desc) if desc.startswith("[") else desc.split("\n")})
                 if pi: self.edit_data[k] = pi
                 else: self.edit_data.pop(k, None)
@@ -2131,9 +2144,28 @@ class CombatRenderer(tk.Frame):
         dialog.transient(self)
         dialog.grab_set()
 
-        tk.Label(dialog, text="Select Status Effects", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack()
+        # 1. Header Title Component
+        tk.Label(dialog, text="Select Status Effects", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack(side=tk.TOP)
+
+        # Track state metrics locally within the frame context
+        current_active = set(s.lower().strip() for s in row_info.get("active_statuses", []))
+        selected_conds = set(current_active)
+
+        def apply_selection():
+            row_info["active_statuses"] = [c.title() for c in sorted(list(CONDITIONS_DB.keys())) if c in selected_conds]
+            self._refresh_status_chips_display(row_info)
+            self._sync_all_rows()
+            dialog.destroy()
+
+        # 2. FIXED: Pack Action Buttons Row to the BOTTOM first to secure its layout boundaries
+        btn_frame = tk.Frame(dialog, bg="#fdf1dc", pady=10)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
+        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=dialog.destroy).pack(side=tk.RIGHT, padx=35)
+
+        # 3. FIXED: List Frame handles expanding space cleanly between top title and bottom buttons
         list_frame = tk.Frame(dialog, bg="#fdf1dc")
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        list_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=15, pady=5)
 
         scrollbar = ttk.Scrollbar(list_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -2148,13 +2180,8 @@ class CombatRenderer(tk.Frame):
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_item, width=e.width))
         scroll_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        def _on_mousewheel_scroll(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel_scroll)
-        dialog.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-        current_active = set(s.lower().strip() for s in row_info.get("active_statuses", []))
-        selected_conds = set(current_active)
+        # Scroll focus listeners
+        dialog.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         def toggle_row(cond_key, row_frame, lbl_widget, base_bg):
             if cond_key in selected_conds:
@@ -2166,6 +2193,7 @@ class CombatRenderer(tk.Frame):
                 row_frame.configure(bg="#4a90e2")
                 lbl_widget.configure(bg="#4a90e2", fg="white")
 
+        # Populate conditions from the static data tracking database
         for idx, cond in enumerate(sorted(list(CONDITIONS_DB.keys()))):
             base_bg = "#f5f5f5" if idx % 2 == 0 else "#e0e0e0"
             
@@ -2181,17 +2209,6 @@ class CombatRenderer(tk.Frame):
                 
             r_frame.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
             lbl_widget.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
-
-        def apply_selection():
-            row_info["active_statuses"] = [c.title() for c in sorted(list(CONDITIONS_DB.keys())) if c in selected_conds]
-            self._refresh_status_chips_display(row_info)
-            self._sync_all_rows()
-            dialog.destroy()
-
-        btn_frame = tk.Frame(dialog, bg="#fdf1dc", pady=10)
-        btn_frame.pack(fill=tk.X)
-        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
-        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=dialog.destroy).pack(side=tk.RIGHT, padx=35)
 
     def _refresh_status_chips_display(self, row_info):
         sb = row_info["status_box"]
@@ -2235,7 +2252,7 @@ class CombatRenderer(tk.Frame):
 
         initial_color = get_panel_color(p.get("side", "Neutral"), p.get("dead", False))
         
-        # Consistent highlightthickness=2 configured alongside dual-state background controls to stop focus-shifting turns to gray
+        # Consistent layout frame container
         panel = tk.Frame(self.parts_frame, bg=initial_color, pady=8, padx=12, bd=1, relief=tk.SOLID, highlightthickness=2, highlightbackground="black", highlightcolor="black")
         panel.pack(fill=tk.X, pady=4)
 
@@ -2248,7 +2265,7 @@ class CombatRenderer(tk.Frame):
         
         panel.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
 
-        # 1. Component 5: Removal Delete Controller (Packed right first to anchor its position)
+        # 1. DELETE Button (Packed to the far right)
         def delete_combatant():
             self._sync_all_rows()
             if self.selected_row_info == row_info:
@@ -2260,8 +2277,8 @@ class CombatRenderer(tk.Frame):
         btn_delete = tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant)
         btn_delete.pack(side=tk.RIGHT, padx=5)
 
-        # 2. Component 4: Health Matrix Panel (Packed right second)
-        hp_container = tk.Frame(panel, bg=initial_color, width=100)
+        # 2. HP Container Panel (Packed next to the delete button on the right)
+        hp_container = tk.Frame(panel, bg=initial_color, width=110)
         hp_container.pack_propagate(False)
         hp_container.pack(side=tk.RIGHT, padx=10, fill=tk.Y)
         hp_container.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
@@ -2281,17 +2298,21 @@ class CombatRenderer(tk.Frame):
         lbl_hp.pack(side=tk.RIGHT, padx=1)
         lbl_hp.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
 
-        # 3. Component 1: Name Field (Proportional relative width scaling)
-        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=12, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
+        # 3. Name Field (Packed to the far left)
+        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=25, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
         name_en.insert(0, p["name"])
         name_en.pack(side=tk.LEFT, padx=5)
         name_en.bind("<Button-1>", lambda e: [self._select_combatant_row(row_info), "continue"][1])
 
-        # 4. Component 2: Stats Display Trigger Button
+        # 4. STATS Trigger Button (Packed next to the name on the left)
         btn_stats = tk.Button(panel, text="STATS", bg="#fae6c5", fg="black", font=("Arial", 8, "bold"), width=6, command=lambda: (self._sync_all_rows(), self.open_statblock_cb(p["target"], p["type"])))
         btn_stats.pack(side=tk.LEFT, padx=5)
+        
+        btn_stats.bind("<Enter>", lambda e, pd=p: self._on_stats_btn_hover_enter(e, pd))
+        btn_stats.bind("<Leave>", lambda e: self._on_stats_btn_hover_leave(e))
+        btn_stats.bind("<Motion>", lambda e: self._on_stats_btn_hover_motion(e))
 
-        # 5. Component 3: Condition Link Zone (Expands to absorb 100% of all remaining horizontal frame space)
+        # 5. Condition Link Zone (Expands to fill all remaining horizontal center space)
         status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=15, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD)
         status_box.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
         row_info["status_box"] = status_box
@@ -2299,13 +2320,27 @@ class CombatRenderer(tk.Frame):
         def custom_adjust_height():
             try:
                 text_content = status_box.get("1.0", "end-1c")
-                chars_per_line = 32  # Anchored to fixed visual wrap width instead of winfo unmapped fallback rules
+                if not text_content.strip():
+                    status_box.configure(height=1)
+                    return
+
+                # Calculate characters per line dynamically using real screen pixels
+                pixel_width = status_box.winfo_width()
+                if pixel_width > 50:
+                    # Times 13 Bold characters average roughly 8 pixels wide
+                    chars_per_line = max(10, pixel_width // 12)
+                else:
+                    # Adaptive baseline fallback before the widget maps to the screen
+                    # Lowered from 32 to 22 because the Name field expanded to 25
+                    chars_per_line = 22  
+
                 total_lines = 0
                 for line in text_content.split("\n"):
                     if not line:
                         total_lines += 1
                     else:
                         total_lines += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
+                
                 total_lines = max(1, total_lines)
                 if total_lines != int(status_box.cget("height")):
                     status_box.configure(height=total_lines)
@@ -2326,43 +2361,11 @@ class CombatRenderer(tk.Frame):
                     return "break"
         status_box.bind("<Button-1>", handle_status_box_interaction)
 
-        status_box.tag_bind("status_link", "<Enter>", lambda e, sb=status_box: self._on_status_hover_enter(e, sb))
+        status_box.tag_bind("status_link", "<Enter>", lambda e, sb=status_box: self._handle_status_hover(e, sb))
         status_box.tag_bind("status_link", "<Leave>", lambda e: self._on_status_hover_leave(e))
-        status_box.tag_bind("status_link", "<Motion>", lambda e, sb=status_box: self._on_status_hover_motion(e, sb))
+        status_box.tag_bind("status_link", "<Motion>", lambda e, sb=status_box: self._handle_status_hover(e, sb))
 
-        # Component 4: Health Matrix (Fixed width)
-        hp_container = tk.Frame(panel, bg=initial_color, width=110)
-        hp_container.pack_propagate(False)
-        hp_container.pack(side=tk.LEFT, padx=15, fill=tk.Y)
-        hp_container.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
-
-        max_hp = self._fetch_max_hp(p.get("target", ""))
-        current_hp = max_hp - p.get("damage", 0)
-
-        lbl_max = tk.Label(hp_container, text=f"/ {max_hp}", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
-        lbl_max.pack(side=tk.RIGHT)
-        lbl_max.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
-
-        hp_en = AutoHeightText(hp_container, canvas_to_refresh=self.main_canvas, width=4, font=("Arial", 10, "bold"), bd=1, relief=tk.SOLID)
-        hp_en.insert(0, str(current_hp))
-        hp_en.pack(side=tk.RIGHT, padx=2)
-        
-        lbl_hp = tk.Label(hp_container, text="HP:", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
-        lbl_hp.pack(side=tk.RIGHT, padx=1)
-        lbl_hp.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
-
-        # Component 5: Removal Delete Controller (Fixed width)
-        def delete_combatant():
-            self._sync_all_rows()
-            if self.selected_row_info == row_info:
-                self.selected_row_info = None
-            self.current_data["participants"].remove(p)
-            self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
-            self._redraw_workspace()
-
-        btn_delete = tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant)
-        btn_delete.pack(side=tk.RIGHT, padx=5)
-
+        # Dynamic UI recoloring handler
         def update_colors():
             new_color = get_panel_color(s_var.get(), d_var.get())
             panel.configure(bg=new_color)
@@ -2515,13 +2518,13 @@ class CombatRenderer(tk.Frame):
             else:
                 tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
 
-
 import math
 import json
 import networkx as nx
 from pathlib import Path
 import tkinter as tk
-from tkinter import font, ttk, messagebox
+from tkinter import font, ttk, messagebox, simpledialog
+from dialogs import TerrainSettingsDialog
 
 class MapGraphRenderer(tk.Frame):
     def __init__(self, parent, map_root_dir, navigate_to_node_cb, mode="location", *args, **kwargs):
@@ -2536,22 +2539,29 @@ class MapGraphRenderer(tk.Frame):
         self.data_key = "depths" if self.mode == "location" else "priority"
 
         # Active Mode Controllers
-        self.current_mode = "select"  # "select", "edge", "new", "delete"
+        self.current_mode = "select"  # "select", "edge", "parent", "new", "delete", "terrain"
         self.selected_node_id = None
+        self.selected_edge_id = None  
         self._edge_start_node = None
         self._new_node_parent_id = None
         self.nodes_map = {}
 
+        # Quick Access Terrain Hotbar Configuration Arrays
         self.terrain_size = 20       
-        self.terrain_color = "#2ecc71" 
+        self.terrain_color = "#9ccca0" 
         self.terrain_path = self.map_root / "terrain_data.json"
+        self.colors_path = self.map_root / "terrain_colors.json"
         
-        # --- ADD THESE THREE TRACKING LINES HERE ---
+        self.quick_colors = [
+            "#9ccca0", "#7aa37a", "#8bbbb0", "#dfa87a", "#cb7d6a",
+            "#ebd391", "#9ac6e6", "#6488a4", "#b399c7", "#aeb6bf"
+        ]
+        
         self._terrain_image = None
         self._img_origin_x = 0
         self._img_origin_y = 0
-        # -------------------------------------------
         
+        self._load_terrain_colors_config()
         self._load_terrain_data()  
         self._cached_pre_shift_mode = "select"
 
@@ -2563,7 +2573,7 @@ class MapGraphRenderer(tk.Frame):
         self.edge_registry = []  
         self._current_tooltip_text = ""
         self._is_panning = False  
-        self._skip_canvas_press = False  # Centralized safety check against mid-click item deletion
+        self._skip_canvas_press = False  
         
         # Matrix Zoom Variables
         self.zoom_level = 1.0
@@ -2581,7 +2591,7 @@ class MapGraphRenderer(tk.Frame):
 
         # Filtering Control Top Panel Bar
         self.layers_frame = tk.Frame(self, bg="#fdf1dc")
-        self.layers_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 5))
+        self.layers_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 2))
 
         # Viewport Structure
         self.canvas = tk.Canvas(self, bg="#fdf1dc", highlightthickness=0)
@@ -2626,141 +2636,127 @@ class MapGraphRenderer(tk.Frame):
         self.winfo_toplevel().bind("<KeyRelease-Shift_R>", lambda e: self._fluid_exit_terrain_brush(), add="+")
         self.bind("<Destroy>", lambda e: self.save_terrain_to_disk())
 
+    def _load_terrain_colors_config(self):
+        if self.colors_path.exists():
+            try:
+                with open(self.colors_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    if isinstance(cfg, dict) and "quick_slots" in cfg:
+                        self.quick_colors = cfg["quick_slots"]
+            except: pass
+
     def _on_canvas_press(self, event):
+        if not self.nodes_map and self.current_mode != "new": return
         if self._skip_canvas_press:
-            self._skip_canvas_press = False
-            return
-        if self._drag_node_id is not None:
-            return
+            self._skip_canvas_press = False; return
+        if self._drag_node_id is not None: return
             
-        # FIXED: Directly check the event bitmask status (1 = Shift held down) to enable fluid painting
         if self.current_mode == "terrain" or (event.state & 0x0001):
             if self.current_mode != "terrain":
                 self._cached_pre_shift_mode = self.current_mode
-                self.current_mode = "terrain"
-                self.canvas.config(cursor="crosshair")
-                self.draw_graph()
-            self._paint_brush_grid_cells(event.x, event.y)
-            return
+                self.current_mode = "terrain"; self.canvas.config(cursor="crosshair"); self.draw_graph()
+            self._paint_brush_grid_cells(event.x, event.y); return
 
         clicked_items = self.canvas.find_withtag("current")
         if clicked_items:
             tags = self.canvas.gettags(clicked_items[0])
-            if any(t in tags for t in ["drag_handle", "node", "link", "edge"]):
-                return
+            if any(t in tags for t in ["drag_handle", "node", "link", "edge"]): return
         
         if self.current_mode == "new":
-            cx = self.canvas.canvasx(event.x)
-            cy = self.canvas.canvasy(event.y)
+            cx, cy = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
             parent_path = Path(self._new_node_parent_id) if self._new_node_parent_id else self.map_root
             self._handle_canvas_new_node_creation(parent_path, cx, cy)
-            self._new_node_parent_id = None
-            self.current_mode = "select"
-            self.draw_graph()
-            return
+            self._new_node_parent_id = None; self.current_mode = "select"; self.draw_graph(); return
 
-        self._is_panning = True
-        self.canvas.scan_mark(event.x, event.y)
+        self._is_panning = True; self.canvas.scan_mark(event.x, event.y)
 
     def _on_canvas_motion(self, event):
         if self.current_mode == "terrain" or (event.state & 0x0001):
-            self._paint_brush_grid_cells(event.x, event.y)
-            return
-            
-        if self._is_panning:
-            self.canvas.scan_dragto(event.x, event.y, gain=1)
+            self._paint_brush_grid_cells(event.x, event.y); return
+        if self._is_panning: self.canvas.scan_dragto(event.x, event.y, gain=1)
 
-    def _on_canvas_release(self, event):
-        self._is_panning = False
+    def _on_canvas_release(self, event): self._is_panning = False
 
     def adjust_zoom(self, units):
-        factor = 1.1 if units < 0 else 0.9
-        new_zoom = self.zoom_level * factor
-        if self.MIN_ZOOM <= new_zoom <= self.MAX_ZOOM:
-            self.zoom_level = new_zoom
-            self.draw_graph()
+        factor = 1.1 if units < 0 else 0.9; new_zoom = self.zoom_level * factor
+        if self.MIN_ZOOM <= new_zoom <= self.MAX_ZOOM: self.zoom_level = new_zoom; self.draw_graph(redraw_controls=False)
 
     def toggle_edge_mode(self):
-        """Toggles the current layout editor state into directional relationship linking mode."""
-        if self.current_mode == "edge":
-            self.current_mode = "select"
-            self._edge_start_node = None
+        if self.current_mode == "edge": self.current_mode = "select"; self._edge_start_node = None
         else:
             self.current_mode = "edge"
-            if self.selected_node_id:
-                self._edge_start_node = self.selected_node_id
-                self.selected_node_id = None  
-            else:
-                self._edge_start_node = None
-        self._new_node_parent_id = None
-        self.draw_graph()
+            if self.selected_node_id: self._edge_start_node = self.selected_node_id; self.selected_node_id = None  
+            else: self._edge_start_node = None
+        self._new_node_parent_id = None; self.draw_graph()
 
     def toggle_parent_mode(self):
-        """Toggles the current layout editor state into parent-child structural movement mode."""
-        if self.current_mode == "parent":
-            self.current_mode = "select"
-            self._edge_start_node = None
+        if self.current_mode == "parent": self.current_mode = "select"; self._edge_start_node = None
         else:
             self.current_mode = "parent"
-            if self.selected_node_id:
-                self._edge_start_node = self.selected_node_id
-                self.selected_node_id = None  
-            else:
-                self._edge_start_node = None
-        self._new_node_parent_id = None
-        self.draw_graph()
+            if self.selected_node_id: self._edge_start_node = self.selected_node_id; self.selected_node_id = None  
+            else: self._edge_start_node = None
+        self._new_node_parent_id = None; self.draw_graph()
 
     def toggle_new_mode(self):
-        """Toggles the editor state into interactive sub-folder creation mode."""
-        if self.current_mode == "new":
-            self.current_mode = "select"
-            self._new_node_parent_id = None
+        if self.current_mode == "new": self.current_mode = "select"; self._new_node_parent_id = None
         else:
             self.current_mode = "new"
-            if self.selected_node_id:
-                self._new_node_parent_id = self.selected_node_id
-                self.selected_node_id = None  
-            else:
-                self._new_node_parent_id = None
-        self._edge_start_node = None
-        self.draw_graph()
+            if self.selected_node_id: self._new_node_parent_id = self.selected_node_id; self.selected_node_id = None  
+            else: self._new_node_parent_id = None
+        self._edge_start_node = None; self.draw_graph()
 
     def toggle_delete_mode(self):
-        """Purges an active node selection or switches workspace focus to removal mode."""
         if self.selected_node_id:
-            self._delete_node(self.selected_node_id)
-            self.selected_node_id = None
-            self.current_mode = "select"
-            self.draw_graph()
+            self._delete_node(self.selected_node_id); self.selected_node_id = None; self.current_mode = "select"; self.draw_graph()
+        elif self.selected_edge_id:
+            u, v = self.selected_edge_id
+            if str(Path(v).parent.resolve()) == str(Path(u).resolve()):
+                if messagebox.askyesno("Confirm Detach", f"Remove parent relation? This will move '{Path(v).name}' to the root folder."):
+                    self._skip_canvas_press = True; self._remove_parent_child_edge(u, v)
+            else:
+                if messagebox.askyesno("Confirm Delete", "Delete this connection permanently?"):
+                    self._skip_canvas_press = True; self._delete_edge_connection(u, v)
+            self.selected_edge_id = None; self.current_mode = "select"; self.draw_graph()
         else:
             self.current_mode = "delete" if self.current_mode != "delete" else "select"
-            self._edge_start_node = None
-            self._new_node_parent_id = None
-            self.draw_graph()
+            self._edge_start_node = None; self._new_node_parent_id = None; self.draw_graph()
 
     def handle_shortcut(self, key):
         """Intercepts system hotkey triggers from the main app window routing pipeline."""
-        if key == 'l':
-            self.toggle_edge_mode()
+
+        if self.selected_node_id:
+            if key in ['plus', 'equal', 'add']:
+                self._adjust_selected_node_depth(1)
+                return True
+            elif key in ['minus', 'underscore', 'subtract']:
+                self._adjust_selected_node_depth(-1)
+                return True
+
+        # FALLBACK: If no node profile is selected, keys map to the hotbar palette swatches
+        key_map = {
+            '1': 0, 'ampersand': 0, '2': 1, 'eacute': 1, '3': 2, 'quotedbl': 2,
+            '4': 3, 'apostrophe': 3, '5': 4, 'parenleft': 4, '6': 5, 'minus': 5,
+            '7': 6, 'egrave': 6, '8': 7, 'underscore': 7, '9': 8, 'ccedilla': 8,
+            '0': 9, 'agrave': 9
+        }
+        if key in key_map:
+            self.terrain_color = self.quick_colors[key_map[key]]
+            self.draw_graph()
             return True
-        elif key == 'p':
-            self.toggle_parent_mode()
+        elif key == 'x':
+            self.terrain_color = "#ffffff"  # Eraser selection shortcut
+            self.draw_graph()
             return True
-        elif key == 'a':
-            self.toggle_new_mode()
-            return True
-        elif key in ['delete', 'backspace']:
-            self.toggle_delete_mode()
-            return True
-        elif key in ['plus', 'equal', 'add']:
-            self._adjust_selected_node_depth(1)
-            return True
-        elif key in ['minus', 'underscore', 'subtract']:
-            self._adjust_selected_node_depth(-1)
-            return True
-        elif key == 't':
-            self.open_terrain_settings_panel()
-            return True
+        elif key == 'i': self.open_node_icon_selector(); return True
+        elif key == 'l': self.toggle_edge_mode(); return True
+        elif key == 'p': self.toggle_parent_mode(); return True
+        elif key == 'a': self.toggle_new_mode(); return True
+        elif key in ['delete', 'backspace']: self.toggle_delete_mode(); return True
+        
+        # Fallback depth options if explicit modification keys are used without a selected node
+        elif key in ['plus', 'equal', 'add']: self._adjust_selected_node_depth(1); return True
+        elif key in ['minus', 'underscore', 'subtract']: self._adjust_selected_node_depth(-1); return True
+        elif key == 't': self.open_terrain_settings_panel(); return True
         return False
 
     def recenter_view(self):
@@ -2770,18 +2766,15 @@ class MapGraphRenderer(tk.Frame):
             sr = [float(x) for x in scroll_region_str.split()]
             if len(sr) == 4:
                 sr_x1, sr_y1, sr_x2, sr_y2 = sr
-                sr_w = sr_x2 - sr_x1
-                sr_h = sr_y2 - sr_y1
+                sr_w = sr_x2 - sr_x1; sr_h = sr_y2 - sr_y1
                 if sr_w > 0 and sr_h > 0:
                     self.canvas.xview_moveto(max(0.0, min(1.0, (0.0 - sr_x1) / sr_w)))
                     self.canvas.yview_moveto(max(0.0, min(1.0, (0.0 - sr_y1) / sr_h)))
         except Exception: pass
 
     def _toggle_layer(self, layer):
-        if layer in self.visible_layers:
-            self.visible_layers.remove(layer)
-        else:
-            self.visible_layers.add(layer)
+        if layer in self.visible_layers: self.visible_layers.remove(layer)
+        else: self.visible_layers.add(layer)
         self.draw_graph()
 
     def _get_layer_color(self, layer):
@@ -2792,134 +2785,116 @@ class MapGraphRenderer(tk.Frame):
 
     def _on_canvas_resize(self, event):
         if event.width != self._last_canvas_width or event.height != self._last_canvas_height:
-            self._last_canvas_width = event.width
-            self._last_canvas_height = event.height
-            self.draw_graph()
+            self._last_canvas_width = event.width; self._last_canvas_height = event.height; self.draw_graph()
 
-    def draw_graph(self):
-        self._on_node_hover_leave(None)
-        self._is_panning = False
-        self.canvas.delete("all")
-        self.node_centers.clear()
-        self.edge_registry.clear()
-        self.nodes_map.clear()
+    def draw_graph(self, redraw_controls=True):
+        self._on_node_hover_leave(None); self._is_panning = False
+        self.canvas.delete("all"); self.node_centers.clear(); self.edge_registry.clear(); self.nodes_map.clear()
         
-        for widget in self.layers_frame.winfo_children():
-            widget.destroy()
+        self._collect_nodes(self.map_root, self.nodes_map)
 
         current_canvas_width = self.canvas.winfo_width()
-        if current_canvas_width <= 1:
-            current_canvas_width = self.current_file_ref_width
-
-        # Set up scale vectors matching global settings
+        if current_canvas_width <= 1: current_canvas_width = self.current_file_ref_width
         scale_factor = current_canvas_width / self.current_file_ref_width
 
-        # --- FIXED: RENDER GRID SQUARES FIRST ---
-        active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
-        layer_rects = self.compressed_rects.get(active_layer, [])
-
-        sf = scale_factor; zl = self.zoom_level
-        self._render_terrain_image(sf, zl)
-
-        if self.current_mode == "terrain":
-            scroll_region_str = self.canvas.cget("scrollregion")
-
-        # --- FIXED: ALIGNED ASSISTANCE GRID LINES (ELIMINATES DRIFT ACCUMULATION) ---
-        if self.current_mode == "terrain":
-            scroll_region_str = self.canvas.cget("scrollregion")
-            if scroll_region_str:
-                sr = [float(x) for x in scroll_region_str.split()]
-                sx1, sy1, sx2, sy2 = int(sr[0]), int(sr[1]), int(sr[2]), int(sr[3])
-            else:
-                sx1, sy1, sx2, sy2 = -2000, -2000, 4000, 4000
-                
-            unscaled_block = self.terrain_size
-            
-            # Render vertical lines snapped to unscaled block coordinates to eliminate truncation drift
-            # Scans from a broad bounding area (-500 to 500 blocks) safely covering the viewport range
-            for ux in range(-500, 500):
-                gx = int(ux * unscaled_block * sf * zl)
-                if sx1 <= gx <= sx2:
-                    self.canvas.create_line(gx, sy1, gx, sy2, fill="#d9ad6c", width=1, dash=(2, 4), tags="assistance_line")
-                    
-            # Render horizontal lines snapped to unscaled block coordinates
-            for uy in range(-500, 500):
-                gy = int(uy * unscaled_block * sf * zl)
-                if sy1 <= gy <= sy2:
-                    self.canvas.create_line(sx1, gy, sx2, gy, fill="#d9ad6c", width=1, dash=(2, 4), tags="assistance_line")
-
-        self._collect_nodes(self.map_root, self.nodes_map)
-        
         sorted_layers = []
         if self.nodes_map:
             all_layers = set()
-            for info in self.nodes_map.values():
-                all_layers.update(info.get("depths", [0]))
+            for info in self.nodes_map.values(): all_layers.update(info.get("depths", [0]))
             sorted_layers = sorted(list(all_layers))
-
             if not self.visible_layers_initialized:
-                self.visible_layers = set(sorted_layers)
-                self.visible_layers_initialized = True
-            else:
-                self.visible_layers = self.visible_layers.intersection(all_layers)
+                self.visible_layers = set(sorted_layers); self.visible_layers_initialized = True
+            else: self.visible_layers = self.visible_layers.intersection(all_layers)
+        else:
+            # --- FIXED: RESET INITIALIZATION ENGINE WHEN DIRECTORY IS EMPTY ---
+            self.visible_layers_initialized = False
 
-        if sorted_layers:
-            tk.Label(self.layers_frame, text=f"{self.label_prefix} Filter:", font=("Georgia", 10, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
-            for layer in sorted_layers:
-                is_on = layer in self.visible_layers
-                btn = tk.Button(self.layers_frame, text=f"{self.label_prefix} {layer}", bg="#7a200d" if is_on else "#e0cbb0", fg="white" if is_on else "black",
-                                font=("Arial", 9, "bold"), relief=tk.RAISED if is_on else tk.SUNKEN, command=lambda l=layer: self._toggle_layer(l))
-                btn.pack(side=tk.LEFT, padx=3)
+        if redraw_controls:
+            for widget in self.layers_frame.winfo_children(): widget.destroy()
+            
+            row1 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row1.pack(fill=tk.X, side=tk.TOP)
+            row2 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row2.pack(fill=tk.X, side=tk.TOP, pady=3)
+            row3 = tk.Frame(self.layers_frame, bg="#fdf1dc"); row3.pack(fill=tk.X, side=tk.TOP)
 
-        tk.Button(self.layers_frame, text="Recenter (0,0)", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=self.recenter_view).pack(side=tk.LEFT, padx=12)
-        
-        edge_bg = "#4a90e2" if self.current_mode == "edge" else "#e0cbb0"
-        edge_fg = "white" if self.current_mode == "edge" else "black"
-        tk.Button(self.layers_frame, text="Edge (L)", bg=edge_bg, fg=edge_fg, font=("Arial", 9, "bold"), command=self.toggle_edge_mode).pack(side=tk.LEFT, padx=3)
+            if sorted_layers:
+                tk.Label(row1, text=f"{self.label_prefix}:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+                
+                filters_frame = tk.Frame(row1, bg="#fdf1dc")
+                filters_frame.pack(side=tk.LEFT, padx=5)
+                
+                for layer in sorted_layers:
+                    is_on = layer in self.visible_layers
+                    if is_on:
+                        btn = tk.Button(filters_frame, text=str(layer), bg="#4a90e2", fg="white", 
+                                        font=("Arial", 8, "bold"), width=3, relief=tk.RAISED,
+                                        command=lambda l=layer: self._toggle_layer(l))
+                    else:
+                        btn = tk.Button(filters_frame, text=str(layer), font=("Arial", 8, "bold"), 
+                                        width=3, relief=tk.SUNKEN,
+                                        command=lambda l=layer: self._toggle_layer(l))
+                    btn.pack(side=tk.LEFT, padx=2)
 
-        parent_bg = "#4a90e2" if self.current_mode == "parent" else "#e0cbb0"
-        parent_fg = "white" if self.current_mode == "parent" else "black"
-        tk.Button(self.layers_frame, text="Parent (P)", bg=parent_bg, fg=parent_fg, font=("Arial", 9, "bold"), command=self.toggle_parent_mode).pack(side=tk.LEFT, padx=3)
+            tk.Button(row1, text="Recenter (0,0)", bg="#4a90e2", fg="white", font=("Arial", 8, "bold"), command=self.recenter_view).pack(side=tk.LEFT, padx=(12, 2))
+            
+            for mode_lbl, mode_val, bg_c in [("Edge (L)", "edge", "#4a90e2"), ("Parent (P)", "parent", "#4a90e2"), ("New (A)", "new", "#2ecc71"), ("Icon (I)", "icon", "#dfa87a"), ("Delete (Del)", "delete", "#ff4d4d")]:
+                is_active = (self.current_mode == mode_val)
+                if mode_val == "icon":
+                    cmd = self.open_node_icon_selector
+                else:
+                    cmd = getattr(self, f"toggle_{mode_val}_mode") if mode_val != "parent" else self.toggle_parent_mode
+                tk.Button(row1, text=mode_lbl, bg=bg_c if is_active else "#e0cbb0", fg="white" if is_active else "black", font=("Arial", 8, "bold"), command=cmd).pack(side=tk.LEFT, padx=2)
 
-        new_bg = "#2ecc71" if self.current_mode == "new" else "#e0cbb0"
-        new_fg = "white" if self.current_mode == "new" else "black"
-        tk.Button(self.layers_frame, text="New (A)", bg=new_bg, fg=new_fg, font=("Arial", 9, "bold"), command=self.toggle_new_mode).pack(side=tk.LEFT, padx=3)
+            tk.Label(row2, text="Quick Palette:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+            for idx, qc_hex in enumerate(self.quick_colors):
+                display_num = str((idx + 1) % 10); is_active_color = (self.terrain_color.lower() == qc_hex.lower())
+                sq_frame = tk.Frame(row2, width=22, height=18, bg=qc_hex, bd=2 if is_active_color else 1, relief=tk.SOLID if is_active_color else tk.GROOVE)
+                sq_frame.pack(side=tk.LEFT, padx=2); sq_frame.pack_propagate(False)
+                lbl_num = tk.Label(sq_frame, text=display_num, font=("Arial", 7, "bold"), bg=qc_hex, fg="black")
+                lbl_num.pack(expand=True)
+                for w in [sq_frame, lbl_num]: w.bind("<Button-1>", lambda e, hc=qc_hex: [setattr(self, 'terrain_color', hc), self.draw_graph(redraw_controls=True)])
 
-        del_bg = "#ff4d4d" if self.current_mode == "delete" else "#e0cbb0"
-        del_fg = "white" if self.current_mode == "delete" else "black"
-        tk.Button(self.layers_frame, text="Delete (Del)", bg=del_bg, fg=del_fg, font=("Arial", 9, "bold"), command=self.toggle_delete_mode).pack(side=tk.LEFT, padx=3)
+            is_eraser_active = (self.terrain_color.lower() == "#ffffff")
+            er_frame = tk.Frame(row2, width=22, height=18, bg="#ffffff", bd=2 if is_eraser_active else 1, relief=tk.SOLID if is_eraser_active else tk.GROOVE)
+            er_frame.pack(side=tk.LEFT, padx=(6, 2)); er_frame.pack_propagate(False)
+            lbl_er = tk.Label(er_frame, text="X", font=("Arial", 7, "bold"), bg="#ffffff", fg="red")
+            lbl_er.pack(expand=True)
+            for w in [er_frame, lbl_er]: w.bind("<Button-1>", lambda e: [setattr(self, 'terrain_color', '#ffffff'), self.draw_graph(redraw_controls=True)])
 
-        try:
-            # Parse brightness vectors dynamically to prevent contrast layout clipping
-            hex_strip = self.terrain_color.lstrip('#')
-            r_val = int(hex_strip[0:2], 16)
-            g_val = int(hex_strip[2:4], 16)
-            b_val = int(hex_strip[4:6], 16)
-            # Standard W3C color relative luminance evaluation thresholds
-            text_fg = "white" if (r_val * 0.299 + g_val * 0.587 + b_val * 0.114) < 130 else "black"
-        except:
-            text_fg = "black"
+            try:
+                hex_strip = self.terrain_color.lstrip('#')
+                text_fg = "white" if (int(hex_strip[0:2],16)*0.299 + int(hex_strip[2:4],16)*0.587 + int(hex_strip[4:6],16)*0.114) < 130 else "black"
+            except: text_fg = "black"
+            tk.Button(row2, text="Select Master...", bg=self.terrain_color, fg=text_fg, font=("Arial", 8, "bold"), command=self.open_terrain_settings_panel).pack(side=tk.LEFT, padx=12)
 
-        terrain_btn_text = f"Terrain: {self.terrain_size}px (T)"
-        tk.Button(self.layers_frame, text=terrain_btn_text, bg=self.terrain_color, fg=text_fg, 
-                  font=("Arial", 9, "bold"), command=self.open_terrain_settings_panel).pack(side=tk.LEFT, padx=12)
-        
-        if not self.nodes_map:
-            msg = f"{self.label_prefix}s directory is empty."
-            self.canvas.create_text(current_canvas_width/2 if current_canvas_width > 50 else 200, 80, text=msg, font=("Georgia", 14, "italic"), fill="black", justify="center")
-            return
+            tk.Label(row3, text="Brush Radius:", font=("Georgia", 9, "bold"), bg="#fdf1dc", fg="#58180d").pack(side=tk.LEFT, padx=(10, 5))
+            for size_val in [10, 20, 50, 100]:
+                is_sz_active = (self.terrain_size == size_val)
+                tk.Button(row3, text=f"{size_val}px", bg="#4a90e2" if is_sz_active else "#e0cbb0", fg="white" if is_sz_active else "black",
+                          font=("Arial", 8, "bold"), command=lambda sv=size_val: [setattr(self, 'terrain_size', sv), self.draw_graph(redraw_controls=True)]).pack(side=tk.LEFT, padx=2)
+
+        if not self.nodes_map: return
+
+        sf = scale_factor; zl = self.zoom_level; self._render_terrain_image(sf, zl)
+
+        if self.current_mode == "terrain":
+            scroll_region_str = self.canvas.cget("scrollregion")
+            sx1, sy1, sx2, sy2 = [int(float(x)) for x in scroll_region_str.split()] if scroll_region_str else (-2000, -2000, 4000, 4000)
+            unscaled_block = self.terrain_size
+            for ux in range(-500, 500):
+                gx = int(ux * unscaled_block * sf * zl)
+                if sx1 <= gx <= sx2: self.canvas.create_line(gx, sy1, gx, sy2, fill="#d9ad6c", width=1, dash=(2, 4), tags="assistance_line")
+            for uy in range(-500, 500):
+                gy = int(uy * unscaled_block * sf * zl)
+                if sy1 <= gy <= sy2: self.canvas.create_line(sx1, gy, sx2, gy, fill="#d9ad6c", width=1, dash=(2, 4), tags="assistance_line")
 
         G = nx.DiGraph()
-        for path_str, info in self.nodes_map.items():
-            G.add_node(path_str, name=info["name"], node_obj=info["node"])
-            
+        for path_str, info in self.nodes_map.items(): G.add_node(path_str, name=info["name"], node_obj=info["node"])
         for path_str, info in self.nodes_map.items():
             for target_item, desc in info["connections"]:
                 t_path = target_item.get("path", target_item.get("target", "")) if isinstance(target_item, dict) else str(target_item)
                 t_path_str = str(Path(t_path).resolve()).lower()
                 target_path = next((p for p in self.nodes_map.keys() if p.lower() == t_path_str), None)
                 if target_path: G.add_edge(path_str, target_path, type="connection", description=desc)
-
         for path_str, info in self.nodes_map.items():
             parent_path_str = str(Path(path_str).parent)
             if parent_path_str in self.nodes_map: G.add_edge(parent_path_str, path_str, type="structure")
@@ -2930,39 +2905,36 @@ class MapGraphRenderer(tk.Frame):
                 with open(self.layout_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if "reference_width" in data and "nodes" in data:
-                        self.current_file_ref_width = data["reference_width"]
-                        saved_nodes = data["nodes"]
+                        self.current_file_ref_width = data["reference_width"]; saved_nodes = data["nodes"]
             except: pass
 
-        scale_factor = current_canvas_width / self.current_file_ref_width
         is_planar, _ = nx.check_planarity(G)
         raw_pos = nx.planar_layout(G) if is_planar else nx.spring_layout(G, k=1.8, iterations=100, seed=42)
-
         x_vals = [c[0] for c in raw_pos.values()]; y_vals = [c[1] for c in raw_pos.values()]
-        min_x, max_x = min(x_vals), max(x_vals)
-        min_y, max_y = min(y_vals), max(y_vals)
-        x_range = (max_x - min_x) if max_x != min_x else 1
-        y_range = (max_y - min_y) if max_y != min_y else 1
-
-        self.node_radius = max(6, int(min(15, int(15 * scale_factor)) * self.zoom_level))  
+        min_x, max_x = min(x_vals), max(x_vals); min_y, max_y = min(y_vals), max(y_vals)
+        x_range = (max_x - min_x) if max_x != min_x else 1; y_range = (max_y - min_y) if max_y != min_y else 1
+        self.node_radius = int(16 * self.zoom_level)  
         needs_save_update = False
 
+        # --- FIXED: REUNITE THE VISIBILITY PIPELINES ACROSS LOCATIONS & EVENTS WITH CONSTRAINTS ---
         intrinsically_visible = set()
         for path_str, info in self.nodes_map.items():
             if any(d in self.visible_layers for d in info.get("depths", [0])): intrinsically_visible.add(path_str)
 
-        if self.mode == "location":
-            cross_layer_visible = set()
-            for u, v, edge_data in G.edges(data=True):
-                if edge_data.get("type") == "connection":
-                    u_pri = self.nodes_map[u].get("depths", [0])[0]
-                    v_pri = self.nodes_map[v].get("depths", [0])[0]
-                    if u_pri != v_pri:
-                        if u in intrinsically_visible: cross_layer_visible.add(v)
-                        if v in intrinsically_visible: cross_layer_visible.add(u)
-            visible_nodes = intrinsically_visible.union(cross_layer_visible)
-        else:
-            visible_nodes = intrinsically_visible
+        extra_visible = set()
+        for u, v, edge_data in G.edges(data=True):
+            etype = edge_data.get("type")
+            if etype == "connection":
+                # Relationship edges lookups pull nodes symmetrically into view
+                if u in intrinsically_visible: extra_visible.add(v)
+                if v in intrinsically_visible: extra_visible.add(u)
+            elif etype == "structure":
+                # Hierarchy: u is parent, v is child. 
+                # Parents can look down to see children, but hidden children never auto-expand under active parents.
+                if v in intrinsically_visible: extra_visible.add(u)
+
+        visible_nodes = intrinsically_visible.union(extra_visible)
+        # -----------------------------------------------------------------------------------------
 
         for node_id in G.nodes:
             if node_id not in visible_nodes: continue
@@ -2970,15 +2942,10 @@ class MapGraphRenderer(tk.Frame):
                 center_x = int(saved_nodes[node_id]["x"] * scale_factor * self.zoom_level)
                 center_y = int(saved_nodes[node_id]["y"] * scale_factor * self.zoom_level)
             else:
-                coords = raw_pos[node_id]
-                norm_x = (coords[0] - min_x) / x_range if x_range != 0 else 0.5
-                norm_y = (coords[1] - min_y) / y_range if y_range != 0 else 0.5
-                base_x = int((0.15 + norm_x * 0.70) * 1000)
-                base_y = int((0.15 + norm_y * 0.70) * 800)
-                center_x = int(base_x * scale_factor * self.zoom_level)
-                center_y = int(base_y * scale_factor * self.zoom_level)
-                saved_nodes[node_id] = {"x": base_x, "y": base_y}
-                needs_save_update = True
+                coords = raw_pos[node_id]; norm_x = (coords[0] - min_x) / x_range; norm_y = (coords[1] - min_y) / y_range
+                base_x, base_y = int((0.15 + norm_x * 0.70) * 1000), int((0.15 + norm_y * 0.70) * 800)
+                center_x, center_y = int(base_x * scale_factor * self.zoom_level), int(base_y * scale_factor * self.zoom_level)
+                saved_nodes[node_id] = {"x": base_x, "y": base_y}; needs_save_update = True
             self.node_centers[node_id] = [center_x, center_y]
 
         if needs_save_update: self._write_current_layout_to_disk(current_canvas_width)
@@ -2992,6 +2959,18 @@ class MapGraphRenderer(tk.Frame):
                 ux, uy = self.node_centers[u]; vx, vy = self.node_centers[v]
                 desc = edge_data.get("description", ""); dx, dy = vx - ux, vy - uy; length = math.hypot(dx, dy) or 1
                 
+                is_edge_selected = (self.selected_edge_id == (u, v))
+                if is_edge_selected:
+                    current_fill = "#ff9900"; current_thick = max(4, int(5 * self.zoom_level))
+                else:
+                    # CHANGE: Color line based on the lowest layer of the target node 'v'
+                    target_info = self.nodes_map.get(v)
+                    if target_info and "depths" in target_info:
+                        current_fill = self._get_layer_color(min(target_info["depths"]))
+                    else:
+                        current_fill = "#000000"
+                    current_thick = edge_thickness if edge_data.get("type") == "connection" else max(1, int(1*self.zoom_level))
+                
                 if edge_data.get("type") == "connection":
                     if G.has_edge(v, u) and G[v][u].get("type") == "connection":
                         mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
@@ -3001,12 +2980,24 @@ class MapGraphRenderer(tk.Frame):
                         tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
                         end_x = vx - (tdx / t_length) * arrow_padding if t_length > arrow_padding else vx
                         end_y = vy - (tdy / t_length) * arrow_padding if t_length > arrow_padding else vy
-                        line_id = self.canvas.create_line(ux, uy, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill="#7a200d", width=edge_thickness, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        
+                        # CHANGE: Offset curved start along vector pointing to control vertex
+                        fdx, fdy = ctrl_x - ux, ctrl_y - uy
+                        f_length = math.hypot(fdx, fdy) or 1
+                        start_x = ux + (fdx / f_length) * arrow_padding if f_length > arrow_padding else ux
+                        start_y = uy + (fdy / f_length) * arrow_padding if f_length > arrow_padding else uy
+                        
+                        line_id = self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding": arrow_padding})
                     else:
                         end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
                         end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
-                        line_id = self.canvas.create_line(ux, uy, end_x, end_y, arrow=tk.LAST, fill="#7a200d", width=edge_thickness, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
+                        
+                        # CHANGE: Offset straight link start coordinate symmetric to end target
+                        start_x = ux + (dx / length) * arrow_padding if length > arrow_padding else ux
+                        start_y = uy + (dy / length) * arrow_padding if length > arrow_padding else uy
+                        
+                        line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                         self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
                     if desc:
                         self.canvas.tag_bind(line_id, "<Enter>", lambda e, lid=line_id, d=desc: self._on_edge_enter(e, lid, d))
@@ -3015,7 +3006,19 @@ class MapGraphRenderer(tk.Frame):
                 else:
                     end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
                     end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
-                    line_id = self.canvas.create_line(ux, uy, end_x, end_y, fill="#a89575", dash=(4, 4), width=max(1, int(1*self.zoom_level)), arrow=tk.LAST, arrowshape=(max(5, int(8*self.zoom_level)), max(6, int(10*self.zoom_level)), max(2, int(3*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
+                    
+                    # CHANGE: Apply padding logic to structural dashed lines as well
+                    start_x = ux + (dx / length) * arrow_padding if length > arrow_padding else ux
+                    start_y = uy + (dy / length) * arrow_padding if length > arrow_padding else uy
+                    
+                    # CHANGE: Color parent structural line based on target layer when unselected
+                    if not is_edge_selected:
+                        target_info = self.nodes_map.get(v)
+                        edge_fill = self._get_layer_color(min(target_info["depths"])) if (target_info and "depths" in target_info) else "#555555"
+                    else:
+                        edge_fill = current_fill
+                        
+                    line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, fill=edge_fill, dash=(4, 4), width=current_thick, arrow=tk.LAST, arrowshape=(max(5, int(8*self.zoom_level)), max(6, int(10*self.zoom_level)), max(2, int(3*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
                     self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
 
         text_offset = self.node_radius + max(4, int(8 * scale_factor * self.zoom_level))
@@ -3024,21 +3027,32 @@ class MapGraphRenderer(tk.Frame):
         for node_id, (center_x, center_y) in self.node_centers.items():
             if node_id not in visible_nodes: continue
             info = self.nodes_map[node_id]; node_obj = info["node"]
-            
-            primary_layer = info.get("depths", [0])[0]
-            bg_color = self._get_layer_color(primary_layer)
-            
-            # Simplified Visual Outlines (Removed redundant thick_border property tree branches)
+            bg_color = self._get_layer_color(info.get("depths", [0])[0])
             is_slc = (node_id == self.selected_node_id) or (node_id == self._edge_start_node) or (node_id == self._new_node_parent_id)
-            border_w = 4 if is_slc else (1 if node_obj.is_entity else 2)
-            outline_color = "#4a90e2" if is_slc else "#58180d"
             
-            self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, fill=bg_color, outline=outline_color, width=border_w, tags=("node", "drag_handle", f"path:{node_id}", f"group:{node_id}"))
+            # Shared tags for all components of this node
+            node_tags = ("node", "drag_handle", f"path:{node_id}", f"group:{node_id}")
             
+            img_obj = self._get_node_icon_image(node_id)
+            if img_obj:
+                self.canvas.create_image(center_x, center_y, image=img_obj, tags=node_tags)
+                if is_slc:
+                    # CHANGE: Swap fixed blue outline for dynamic layer color
+                    self.canvas.create_rectangle(center_x - self.node_radius - 2, center_y - self.node_radius - 2, 
+                                                center_x + self.node_radius + 2, center_y + self.node_radius + 2, 
+                                                outline=bg_color, width=3, tags=node_tags)
+            else:
+                border_w = 4 if is_slc else (1 if node_obj.is_entity else 2)
+                outline_color = "#4a90e2" if is_slc else "#58180d"
+                self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, 
+                                        fill=bg_color, outline=outline_color, width=border_w, tags=node_tags)
+            # --- FIXED: UNNESTED OUTSIDE THE IF/ELSE GEOMETRY CHECKER ---
             dx_sum, dy_sum = 0, 0
             for neighbor in G.neighbors(node_id):
                 if neighbor not in visible_nodes: continue
-                nx_c, ny_c = self.node_centers[neighbor]; ndx, ndy = nx_c - center_x, ny_c - center_y; dist = math.hypot(ndx, ndy) or 1
+                nx_c, ny_c = self.node_centers[neighbor]
+                ndx, ndy = nx_c - center_x, ny_c - center_y
+                dist = math.hypot(ndx, ndy) or 1
                 dx_sum += ndx / dist; dy_sum += ndy / dist
             for predecessor in G.predecessors(node_id):
                 if predecessor not in visible_nodes: continue
@@ -3048,7 +3062,8 @@ class MapGraphRenderer(tk.Frame):
             text_x, text_y = center_x, (center_y - text_offset if dy_sum >= 0 else center_y + text_offset)
             text_anchor = tk.S if dy_sum >= 0 else tk.N  
 
-            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", font_size, "bold", "underline"), fill="#4a90e2", width=int(150*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
+            text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", font_size, "bold", "underline"), 
+                                      fill=bg_color, width=int(150*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
             self.canvas.tag_bind(text_id, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
             self.canvas.tag_bind(text_id, "<Leave>", lambda e: self.canvas.config(cursor=""))
             
@@ -3063,8 +3078,7 @@ class MapGraphRenderer(tk.Frame):
 
     def _update_scroll_region(self):
         if not self.node_centers:
-            self.canvas.configure(scrollregion=(0, 0, 1000, 800))
-            return
+            self.canvas.configure(scrollregion=(0, 0, 1000, 800)); return
         cx_vals = [c[0] for c in self.node_centers.values()]; cy_vals = [c[1] for c in self.node_centers.values()]
         frame_w, frame_h = max(100, self.canvas.winfo_width()), max(100, self.canvas.winfo_height())
         min_region_x, max_region_x = min(cx_vals) - (frame_w / 2), max(cx_vals) + (frame_w / 2)
@@ -3076,12 +3090,19 @@ class MapGraphRenderer(tk.Frame):
         self.canvas.configure(scrollregion=(min_region_x, min_region_y, max_region_x, max_region_y))
 
     def _on_edge_enter(self, event, line_id, description):
-        self.canvas.itemconfig(line_id, fill="#4a90e2", width=max(2, int(3.5*self.zoom_level)))
+        if self.selected_edge_id != (self.canvas.gettags(line_id)[0].split("from:",1)[1], self.canvas.gettags(line_id)[1].split("to:",1)[1]):
+            self.canvas.itemconfig(line_id, fill="#4a90e2", width=max(2, int(3.5*self.zoom_level)))
         self.canvas.config(cursor="hand2"); self._show_tooltip(event, description)
 
     def _on_edge_motion(self, event): self._show_tooltip(event, None)
     def _on_edge_leave(self, event, line_id):
-        self.canvas.itemconfig(line_id, fill="#7a200d", width=max(1, int(2*self.zoom_level)))
+        tags = self.canvas.gettags(line_id)
+        if tags and len(tags) >= 2:
+            u = tags[0].split("from:", 1)[1]; v = tags[1].split("to:", 1)[1]
+            if self.selected_edge_id == (u, v):
+                self.canvas.itemconfig(line_id, fill="#ff9900", width=max(4, int(5 * self.zoom_level)))
+                self.canvas.config(cursor=""); self.canvas.delete("tooltip"); return
+        self.canvas.itemconfig(line_id, fill="#000000", width=max(1, int(2*self.zoom_level)))
         self.canvas.config(cursor=""); self.canvas.delete("tooltip")
 
     def _show_tooltip(self, event, description):
@@ -3097,93 +3118,73 @@ class MapGraphRenderer(tk.Frame):
             self.canvas.tag_lower(bg_id, t_id)
 
     def _on_edge_press(self, event):
-        if self.current_mode != "delete": return "break" # <-- FIXED: Returns break
         item = self.canvas.find_withtag("current")[0]; tags = self.canvas.gettags(item)
         from_tag = next((t for t in tags if t.startswith("from:")), None)
         to_tag = next((t for t in tags if t.startswith("to:")), None)
-        if from_tag and to_tag:
-            u = from_tag.split("from:", 1)[1]; v = to_tag.split("to:", 1)[1]
-            
+        if not (from_tag and to_tag): return "break"
+        u = from_tag.split("from:", 1)[1]; v = to_tag.split("to:", 1)[1]; self._skip_canvas_press = True
+        
+        if self.current_mode == "delete":
             if str(Path(v).parent.resolve()) == str(Path(u).resolve()):
                 if messagebox.askyesno("Confirm Detach", f"Remove parent relation? This will move '{Path(v).name}' to the root folder."):
-                    self._skip_canvas_press = True
-                    self._remove_parent_child_edge(u, v)
-                    self._edge_start_node = None
-                    self.current_mode = "select"
-                    self.draw_graph()
+                    self._remove_parent_child_edge(u, v); self._edge_start_node = None; self.current_mode = "select"; self.draw_graph()
             else:
                 if messagebox.askyesno("Confirm Delete", "Delete this connection permanently?"):
-                    self._skip_canvas_press = True
-                    self._delete_edge_connection(u, v)
-                    self._edge_start_node = None
-                    self.current_mode = "select"
-                    self.draw_graph()
+                    self._delete_edge_connection(u, v); self._edge_start_node = None; self.current_mode = "select"; self.draw_graph()
+            return "break"
+        elif self.current_mode == "select":
+            self.selected_node_id = None
+            self.selected_edge_id = None if self.selected_edge_id == (u, v) else (u, v)
+            self.draw_graph(); return "break"
         return "break"
 
     def _on_node_press(self, event):
         item = self.canvas.find_withtag("current")[0]
         path_tag = next((t for t in self.canvas.gettags(item) if t.startswith("path:")), None)
         if not path_tag: return
-        node_id = path_tag.split("path:", 1)[1]
-        
-        self._skip_canvas_press = True
+        node_id = path_tag.split("path:", 1)[1]; self._skip_canvas_press = True
         
         if self.current_mode == "edge":
             if self._edge_start_node is None:
                 self._edge_start_node = node_id
-                self.canvas.itemconfig(item, outline="#4a90e2", width=4)
+                self.draw_graph()  # FIXED: Call draw_graph instead of itemconfig
             else:
-                if self._edge_start_node != node_id: 
-                    self._create_edge_connection(self._edge_start_node, node_id)
-                self._edge_start_node = None
-                self.current_mode = "select"
-                self.draw_graph()
+                if self._edge_start_node != node_id: self._create_edge_connection(self._edge_start_node, node_id)
+                self._edge_start_node = None; self.current_mode = "select"; self.draw_graph()
             return "break"
         
         elif self.current_mode == "parent":
             if self._edge_start_node is None:
                 self._edge_start_node = node_id
-                self.canvas.itemconfig(item, outline="#4a90e2", width=4)
+                self.draw_graph()  # FIXED: Call draw_graph instead of itemconfig
             else:
-                if self._edge_start_node != node_id:
-                    self._create_parent_child_relation(self._edge_start_node, node_id)
-                self._edge_start_node = None
-                self.current_mode = "select"
-                self.draw_graph()
+                if self._edge_start_node != node_id: self._create_parent_child_relation(self._edge_start_node, node_id)
+                self._edge_start_node = None; self.current_mode = "select"; self.draw_graph()
             return "break"
             
         elif self.current_mode == "new":
             self._new_node_parent_id = None if self._new_node_parent_id == node_id else node_id
-            self.draw_graph()
-            return "break"
+            self.draw_graph(); return "break"
             
         elif self.current_mode == "delete":
-            self._delete_node(node_id)
-            self.current_mode = "select"
-            return "break"
+            self._delete_node(node_id); self.current_mode = "select"; return "break"
             
-        else: # Standard navigation / selection mode logic block
-            self._drag_node_id = node_id
-            self._drag_start_x = self.canvas.canvasx(event.x)
-            self._drag_start_y = self.canvas.canvasy(event.y)
+        else: 
+            self._drag_node_id = node_id; self._drag_start_x = self.canvas.canvasx(event.x); self._drag_start_y = self.canvas.canvasy(event.y)
+            self._is_panning = False; self.selected_edge_id = None  
             
-            self._is_panning = False
-            # Persistent selection toggle logic: updates look instantly without breaking dragging mechanics
             if self.selected_node_id == node_id:
                 self.selected_node_id = None
-                info = self.nodes_map.get(node_id)
-                b_w = 1 if info and info["node"].is_entity else 2
-                self.canvas.itemconfig(item, outline="#58180d", width=b_w)
             else:
                 self.selected_node_id = node_id
-                self.canvas.itemconfig(item, outline="#4a90e2", width=4)
+                
+            #self.draw_graph()  # FIXED: Redraw canvas to update selections cleanly
             return "break"
 
     def _on_node_motion(self, event):
         if self.current_mode != "select" or not self._drag_node_id: return
         cur_x, cur_y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
         dx, dy = cur_x - self._drag_start_x, cur_y - self._drag_start_y
-        
         proposed_x = self.node_centers[self._drag_node_id][0] + dx
         proposed_y = self.node_centers[self._drag_node_id][1] + dy
         self.canvas.move(f"group:{self._drag_node_id}", dx, dy)
@@ -3200,24 +3201,30 @@ class MapGraphRenderer(tk.Frame):
                     tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
                     end_x = vx - (tdx / t_length) * p if t_length > p else vx
                     end_y = vy - (tdy / t_length) * p if t_length > p else vy
-                    self.canvas.coords(edge["id"], ux, uy, ctrl_x, ctrl_y, end_x, end_y)
+                    
+                    # MODIFICATION: Re-calculate padded start positioning for curved motion adjustments
+                    fdx, fdy = ctrl_x - ux, ctrl_y - uy
+                    f_length = math.hypot(fdx, fdy) or 1
+                    start_x = ux + (fdx / f_length) * p if f_length > p else ux
+                    start_y = uy + (fdy / f_length) * p if f_length > p else uy
+                    
+                    self.canvas.coords(edge["id"], start_x, start_y, ctrl_x, ctrl_y, end_x, end_y)
                 else:
                     end_x = vx - (lx / length) * p if length > p else vx
                     end_y = vy - (ly / length) * p if length > p else vy
-                    self.canvas.coords(edge["id"], ux, uy, end_x, end_y)
-        self._drag_start_x, self._drag_start_y = cur_x, cur_y
-        self._update_scroll_region()
+                    
+                    # MODIFICATION: Re-calculate padded start positioning for straight motion adjustments
+                    start_x = ux + (lx / length) * p if length > p else ux
+                    start_y = uy + (ly / length) * p if length > p else uy
+                    
+                    self.canvas.coords(edge["id"], start_x, start_y, end_x, end_y)
+        self._drag_start_x, self._drag_start_y = cur_x, cur_y; self._update_scroll_region()
 
     def _on_node_release(self, event):
         if self.current_mode != "select" or not self._drag_node_id: return
-        dragged_id = self._drag_node_id
-        self._drag_node_id = None
-        
+        dragged_id = self._drag_node_id; self._drag_node_id = None
         current_width = max(100, self.canvas.winfo_width())
-        self._write_current_layout_to_disk(current_width, dragged_id=dragged_id)
-        
-        # Safely triggers full network redraw on release to clear out any old selection highlights
-        self.draw_graph()
+        self._write_current_layout_to_disk(current_width, dragged_id=dragged_id); self.draw_graph()
 
     def _create_edge_connection(self, source_id, target_id):
         source_info = self.nodes_map.get(source_id); target_info = self.nodes_map.get(target_id)
@@ -3252,7 +3259,6 @@ class MapGraphRenderer(tk.Frame):
         except Exception as e: print(f"Edge compilation deletion aborted: {e}")
 
     def _adjust_selected_node_depth(self, delta):
-        """Shifts all depth/priority indexes of the highlighted profile node by +1 or -1."""
         if not self.selected_node_id: return
         info = self.nodes_map.get(self.selected_node_id)
         if not info or not info["node"].stat_path: return
@@ -3268,86 +3274,135 @@ class MapGraphRenderer(tk.Frame):
         except Exception as e: print(f"Failed depth modification: {e}")
 
     def _remove_parent_child_edge(self, parent_id, child_id):
-        """Detaches a directory subfolder and restores it to the application's root directory."""
         import shutil
-        old_child_path = Path(child_id)
-        new_child_path = self.map_root / old_child_path.name
-        if new_child_path.exists():
-            messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists at the root.")
-            return
+        old_child_path = Path(child_id); new_child_path = self.map_root / old_child_path.name
+        if new_child_path.exists(): messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists at the root."); return
         try:
-            shutil.move(str(old_child_path), str(new_child_path))
-            
-            # Delegate tracking operations entirely to your main class global synchronization script
-            toplevel = self.winfo_toplevel()
+            shutil.move(str(old_child_path), str(new_child_path)); toplevel = self.winfo_toplevel()
             if hasattr(toplevel, "sync_reciprocal_relations"):
                 toplevel.sync_reciprocal_relations(old_path_prefix=old_child_path, new_path_prefix=new_child_path)
                 toplevel.refresh_tree_silent()
-                toplevel.clear_viewer_and_tree()
+                # FIXED: Removed clear_viewer_and_tree() here as well
         except Exception as e: messagebox.showerror("Error", f"Failed moving node to root: {e}")
 
     def _create_parent_child_relation(self, parent_id, child_id):
-        """Nests a node's filesystem directory inside a new parent folder node context."""
         import shutil
-        old_child_path = Path(child_id)
-        new_child_path = Path(parent_id) / old_child_path.name
-        if new_child_path.exists():
-            messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists inside that parent.")
-            return
-        try:
-            shutil.move(str(old_child_path), str(new_child_path))
+        old_child_path = Path(child_id); new_child_path = Path(parent_id) / old_child_path.name
+
+        if parent_id == child_id or Path(parent_id).resolve() == Path(child_id).resolve():
+            messagebox.showerror("Error", "A map node entity cannot become its own parent destination.")
+            return "break"
+        if Path(child_id).resolve() in Path(parent_id).resolve().parents:
+            messagebox.showerror("Error", "Cycle detected: A map node cannot be nested inside one of its own descendants.")
+            return "break"
             
-            # Delegate tracking operations entirely to your main class global synchronization script
-            toplevel = self.winfo_toplevel()
+        if new_child_path.exists(): messagebox.showerror("Error", f"A node named '{old_child_path.name}' already exists inside that parent."); return
+        try:
+            shutil.move(str(old_child_path), str(new_child_path)); toplevel = self.winfo_toplevel()
             if hasattr(toplevel, "sync_reciprocal_relations"):
                 toplevel.sync_reciprocal_relations(old_path_prefix=old_child_path, new_path_prefix=new_child_path)
                 toplevel.refresh_tree_silent()
-                toplevel.clear_viewer_and_tree()
+                # FIXED: Removed clear_viewer_and_tree() here as well
         except Exception as e: messagebox.showerror("Error", f"Failed nesting parent relation: {e}")
-
 
     def _handle_canvas_new_node_creation(self, parent_path, cx, cy):
         title = "Add Location" if self.mode == "location" else "Add Event"
-        prompt = "Location name:" if self.mode == "location" else "Event name:"
-        fn = simpledialog.askstring(title, prompt)
-        if not fn or not fn.strip(): return
+        lbl_text = "Location Name:" if self.mode == "location" else "Event Name:"
+        default_icon_path = Path("assets/icons/location_icons/default.png") if self.mode == "location" else Path("assets/icons/events_icons/default.png")
         
-        sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
-        nd = parent_path / sn; nd.mkdir(parents=True, exist_ok=True)
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.geometry("400x220")
+        dialog.configure(bg="#fdf1dc")
         
-        icon_file = "map_icon.png" if self.mode == "location" else "event_icon.png"
-        if Path(f"./utils/{icon_file}").exists():
+        # CHANGE: Extract pointer location on the display to place layout next to cursor
+        mx, my = self.winfo_pointerxy()
+        dialog.geometry(f"400x220+{mx + 10}+{my + 10}")
+        
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        chosen_icon_path = [default_icon_path]
+        
+        f_row = tk.Frame(dialog, bg="#fdf1dc")
+        f_row.pack(fill=tk.X, padx=15, pady=15)
+        tk.Label(f_row, text=lbl_text, font=("Georgia", 11, "bold"), bg="#fdf1dc", fg="black").pack(side=tk.LEFT, padx=(0, 10))
+        name_ent = tk.Entry(f_row, font=("Arial", 11), bd=1, relief=tk.SOLID)
+        name_ent.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        i_row = tk.Frame(dialog, bg="#fdf1dc")
+        i_row.pack(fill=tk.X, padx=15, pady=5)
+        tk.Label(i_row, text="Node Icon:", font=("Georgia", 11, "bold"), bg="#fdf1dc", fg="black").pack(side=tk.LEFT, padx=(0, 10))
+        
+        img_lbl = tk.Label(i_row, bg="#fae6c5", bd=1, relief=tk.SOLID, cursor="hand2")
+        img_lbl.pack(side=tk.LEFT)
+        
+        def update_preview_icon(p_path):
             try:
-                from PIL import Image
-                img = Image.open(f"./utils/{icon_file}"); img.thumbnail((64, 64))
-                img.save(nd / f"{sn}.png", "PNG")
-            except: pass
+                if not Path(p_path).exists():
+                    Path(p_path).parent.mkdir(parents=True, exist_ok=True)
+                    src_fallback = Path("./assets/icons/map_icon.png") if self.mode == "location" else Path("./assets/icons/event_icon.png")
+                    if src_fallback.exists(): shutil.copy(str(src_fallback), str(p_path))
+                pil_img = Image.open(p_path)
+                pil_img.thumbnail((32, 32))
+                tk_img = ImageTk.PhotoImage(pil_img)
+                img_lbl.configure(image=tk_img)
+                img_lbl.image = tk_img
+            except:
+                img_lbl.configure(text="Pick Icon", font=("Arial", 9), padx=5, pady=5)
+                
+        update_preview_icon(chosen_icon_path[0])
+        
+        def choose_icon_action():
+            def on_choice(path):
+                chosen_icon_path[0] = Path(path)
+                update_preview_icon(path)
+            from dialogs import NodeIconSelectorDialog
+            NodeIconSelectorDialog(dialog, self.mode, on_choice)
             
-        active_layers = sorted(list(self.visible_layers)) if self.visible_layers else [0]
-        stat_json = nd / f"{sn}.json"
-        default_data = {"name": fn, "description": "", "monsters": [], "npcs": [], "combats": [], "events" if self.mode == "location" else "locations": [], "objects": [], "connections": [], self.data_key: active_layers}
-        try:
+        img_lbl.bind("<Button-1>", lambda e: choose_icon_action())
+        tk.Button(i_row, text="Change...", font=("Arial", 9), command=choose_icon_action).pack(side=tk.LEFT, padx=10)
+        
+        def on_confirm():
+            fn = name_ent.get().strip()
+            if not fn: return
+            sn = "".join([c for c in fn if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+            nd = parent_path / sn
+            if nd.exists():
+                messagebox.showerror("Error", "A node path configuration conflict exists.")
+                return
+            nd.mkdir(parents=True, exist_ok=True)
+            
+            if chosen_icon_path[0].exists():
+                try: shutil.copy(str(chosen_icon_path[0]), str(nd / f"{sn}.png"))
+                except Exception as e: print(f"Asset directory copy failed: {e}")
+                    
+            active_layers = sorted(list(self.visible_layers)) if self.visible_layers else [0]
+            stat_json = nd / f"{sn}.json"
+            default_data = {"name": fn, "description": "", "monsters": [], "npcs": [], "combats": [], "events" if self.mode == "location" else "locations": [], "objects": [], "connections": [], self.data_key: active_layers}
             with open(stat_json, "w", encoding="utf-8") as f: json.dump(default_data, f, indent=4)
-        except Exception as e: print(f"Failed to write schema JSON data payload: {e}")
-
-        current_width = max(100, self.canvas.winfo_width())
-        sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
-        zl = self.zoom_level if self.zoom_level > 0 else 1.0
-        base_x = int(round(cx / (sf * zl))); base_y = int(round(cy / (sf * zl)))
-        
-        saved_nodes = {}
-        if self.layout_path.exists():
-            try:
-                with open(self.layout_path, "r", encoding="utf-8") as f:
-                    ld = json.load(f); saved_nodes = ld.get("nodes", {})
-            except: pass
-        saved_nodes[str(nd)] = {"x": base_x, "y": base_y}
-        try:
-            with open(self.layout_path, "w", encoding="utf-8") as f: json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
-        except Exception as e: print(f"Failed to record layout node position variables: {e}")
+                
+            current_width = max(100, self.canvas.winfo_width())
+            sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
+            zl = self.zoom_level if self.zoom_level > 0 else 1.0
+            base_x, base_y = int(round(cx / (sf * zl))), int(round(cy / (sf * zl)))
             
-        toplevel = self.winfo_toplevel()
-        if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
+            saved_nodes = {}
+            if self.layout_path.exists():
+                try:
+                    with open(self.layout_path, "r", encoding="utf-8") as f: saved_nodes = json.load(f).get("nodes", {})
+                except: pass
+            saved_nodes[str(nd)] = {"x": base_x, "y": base_y}
+            with open(self.layout_path, "w", encoding="utf-8") as f: json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
+                
+            toplevel = self.winfo_toplevel()
+            if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
+            dialog.destroy()
+            self.current_mode = "select"
+            self.draw_graph()
+            
+        tk.Button(dialog, text="Confirm & Create", font=("Arial", 10, "bold"), bg="#2ecc71", fg="white", command=on_confirm).pack(side=tk.BOTTOM, pady=15)
+        dialog.wait_window()
 
     def _delete_node(self, node_id):
         info = self.nodes_map.get(node_id)
@@ -3358,10 +3413,13 @@ class MapGraphRenderer(tk.Frame):
                 node_path = Path(node_id); target_path = node_path.resolve()
                 if node_path.is_file(): node_path.unlink()
                 else: shutil.rmtree(node_path)
+                
                 toplevel = self.winfo_toplevel()
-                if hasattr(toplevel, "sync_reciprocal_relations"): toplevel.sync_reciprocal_relations(delete_path_prefix=target_path)
-                if hasattr(toplevel, "refresh_tree_silent"): toplevel.refresh_tree_silent()
-                if hasattr(toplevel, "clear_viewer_and_tree"): toplevel.clear_viewer_and_tree()
+                if hasattr(toplevel, "sync_reciprocal_relations"): 
+                    toplevel.sync_reciprocal_relations(delete_path_prefix=target_path)
+                if hasattr(toplevel, "refresh_tree_silent"): 
+                    toplevel.refresh_tree_silent()
+
                 self.draw_graph()
             except Exception as ex: messagebox.showerror("Error", f"Purge routine aborted: {ex}")
 
@@ -3393,8 +3451,7 @@ class MapGraphRenderer(tk.Frame):
             if stat_path and stat_path.exists():
                 try:
                     with open(stat_path, "r", encoding="utf-8") as f:
-                        m_data = json.load(f)
-                        display_name = m_data.get("name", display_name)
+                        m_data = json.load(f); display_name = m_data.get("name", display_name)
                         connections = [(c.get("target"), c.get("description", "")) for c in m_data.get("connections", []) if c.get("target")]
                         depths = m_data.get(self.data_key, [0])
                         if not isinstance(depths, list): depths = [depths]
@@ -3413,23 +3470,16 @@ class MapGraphRenderer(tk.Frame):
             self._hover_popup, self._hover_target = None, None
 
     def _handle_node_hover(self, event):
-        if self._drag_node_id or self._is_panning or self.current_mode != "select":  
-            self._on_node_hover_leave(None)
-            return
+        if self._drag_node_id or self._is_panning or self.current_mode != "select":  self._on_node_hover_leave(None); return
         items = self.canvas.find_withtag("current")
-        if not items:
-            self._on_node_hover_leave(None)
-            return
+        if not items: self._on_node_hover_leave(None); return
         item = items[0]; tags = self.canvas.gettags(item); node_id = None
         for t in tags:
             if t.startswith("path:"): node_id = t.split("path:", 1)[1]; break
         if not node_id:
             for t in tags:
-                if t not in ["link", "current", "edge", "node", "drag_handle"] and not t.startswith("group:"):
-                    node_id = t; break
-        if not node_id:
-            self._on_node_hover_leave(None)
-            return
+                if t not in ["link", "current", "edge", "node", "drag_handle"] and not t.startswith("group:"): node_id = t; break
+        if not node_id: self._on_node_hover_leave(None); return
         scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
         popup_w, popup_h = int(scr_w * 2 / 5), int(scr_h * 2 / 5)
         x_pos = event.x_root + 15 if event.x_root < (scr_w / 2) else event.x_root - popup_w - 15
@@ -3439,7 +3489,6 @@ class MapGraphRenderer(tk.Frame):
             if hasattr(self, "_hover_popup") and self._hover_popup: self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
         self._on_node_hover_leave(None); self._hover_target = node_id
-        
         popup = tk.Toplevel(self); popup.is_hover_popup = True; popup.wm_overrideredirect(True)
         popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID); popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
@@ -3457,256 +3506,180 @@ class MapGraphRenderer(tk.Frame):
             else: tk.Label(popup, text="No detailed tracker sheet for this node.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
 
     def open_terrain_settings_panel(self):
-        """Displays the popup terrain window layer settings builder configurations frame panel."""
-        def on_settings_applied(new_size, new_color):
-            self.terrain_size = new_size
-            self.terrain_color = new_color
-            self.draw_graph()
-            
+        def on_settings_applied(new_size, new_color): self.terrain_size = new_size; self.terrain_color = new_color; self.draw_graph()
         TerrainSettingsDialog(self, self.terrain_size, self.terrain_color, on_settings_applied)
 
     def _fluid_enter_terrain_brush(self):
-        """Toggles the tool instantly when holding down Shift."""
         if self.current_mode != "terrain":
             focused = self.winfo_toplevel().focus_get()
             if focused and isinstance(focused, (tk.Text, tk.Entry)): return 
             self._cached_pre_shift_mode = self.current_mode
-            self.current_mode = "terrain"
-            self.canvas.config(cursor="crosshair")
-            self.draw_graph()
+            self.current_mode = "terrain"; self.canvas.config(cursor="crosshair"); self.draw_graph()
 
     def _fluid_exit_terrain_brush(self):
-        """Compresses changes and redraws safely when Shift is released."""
         if self.current_mode == "terrain":
-            self.current_mode = self._cached_pre_shift_mode
-            self.canvas.config(cursor="")
-            
-            # Compress the currently modified active layer
+            self.current_mode = self._cached_pre_shift_mode; self.canvas.config(cursor="")
             active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
-            self._compress_terrain_layer(active_layer)
-            self.save_terrain_to_disk()
-            
-            self.draw_graph()
+            self._compress_terrain_layer(active_layer); self.save_terrain_to_disk(); self.draw_graph()
 
     def _render_terrain_image(self, sf, zl):
-        """Compiles the sparse matrix data frame into a single continuous high-performance backdrop bitmap."""
         self.canvas.delete("background_texture")
         active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
-        
-        # Isolate coordinates matching our active target layer
-        layer_prefix = f"{active_layer}:"
-        active_cells = {}
+        layer_prefix = f"{active_layer}:"; active_cells = {}
         for k, v in self.working_grid.items():
-            if k.startswith(layer_prefix):
-                coord_part = k.split(":", 1)[1]
-                cx, cy = map(int, coord_part.split(","))
-                active_cells[(cx, cy)] = v
-        
-        if not active_cells:
-            self._terrain_image = None
-            self._img_origin_x = 0
-            self._img_origin_y = 0
-            return
-
-        # Calculate a tight bounding box around the painted coordinates
-        xs = [c[0] for c in active_cells.keys()]
-        ys = [c[1] for c in active_cells.keys()]
-        min_cx, max_cx = min(xs), max(xs)
-        min_cy, max_cy = min(ys), max(ys)
-
-        # Pad bounds by 2 grid cells to prevent rounding edge clips during high zoom scales
-        min_cx -= 2; min_cy -= 2
-        max_cx += 2; max_cy += 2
-
-        # Convert unscaled grid cells into absolute viewport canvas pixel coordinates
-        self._img_origin_x = int(min_cx * 10 * sf * zl)
-        self._img_origin_y = int(min_cy * 10 * sf * zl)
-        max_vx = int((max_cx + 1) * 10 * sf * zl)
-        max_vy = int((max_cy + 1) * 10 * sf * zl)
-
-        img_w = max_vx - self._img_origin_x
-        img_h = max_vy - self._img_origin_y
+            if k.startswith(layer_prefix): coord_part = k.split(":", 1)[1]; cx, cy = map(int, coord_part.split(",")); active_cells[(cx, cy)] = v
+        if not active_cells: self._terrain_image = None; self._img_origin_x = 0; self._img_origin_y = 0; return
+        xs = [c[0] for c in active_cells.keys()]; ys = [c[1] for c in active_cells.keys()]
+        min_cx, max_cx = min(xs) - 2, max(xs) + 2; min_cy, max_cy = min(ys) - 2, max(ys) + 2
+        self._img_origin_x = int(min_cx * 10 * sf * zl); self._img_origin_y = int(min_cy * 10 * sf * zl)
+        max_vx, max_vy = int((max_cx + 1) * 10 * sf * zl), int((max_cy + 1) * 10 * sf * zl)
+        img_w, img_h = max_vx - self._img_origin_x, max_vy - self._img_origin_y
         if img_w <= 0 or img_h <= 0: return
-
-        # Allocate a single continuous Tk PhotoImage memory buffer
         self._terrain_image = tk.PhotoImage(width=img_w, height=img_h)
-
-        # Performance Blit: Push pixels into C-memory structures via bounding box region fills
         for (cx, cy), color in active_cells.items():
-            x1 = int(cx * 10 * sf * zl) - self._img_origin_x
-            y1 = int(cy * 10 * sf * zl) - self._img_origin_y
-            x2 = int((cx + 1) * 10 * sf * zl) - self._img_origin_x
-            y2 = int((cy + 1) * 10 * sf * zl) - self._img_origin_y
-            
-            if x2 > x1 and y2 > y1:
-                self._terrain_image.put(color, to=(x1, y1, x2, y2))
-
-        # Mount the single composite background item directly onto the canvas view frame
+            x1 = int(cx * 10 * sf * zl) - self._img_origin_x; y1 = int(cy * 10 * sf * zl) - self._img_origin_y
+            x2 = int((cx + 1) * 10 * sf * zl) - self._img_origin_x; y2 = int((cy + 1) * 10 * sf * zl) - self._img_origin_y
+            if x2 > x1 and y2 > y1: self._terrain_image.put(color, to=(x1, y1, x2, y2))
         self.canvas.create_image(self._img_origin_x, self._img_origin_y, image=self._terrain_image, anchor="nw", tags="background_texture")
         self.canvas.tag_lower("background_texture")
 
     def _paint_brush_grid_cells(self, x_pos, y_pos):
-        """Maps canvas screen positions onto grid keys and streams pixels directly into memory."""
         current_width = max(100, self.canvas.winfo_width())
         sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
         zl = self.zoom_level if self.zoom_level > 0 else 1.0
-
-        cx = self.canvas.canvasx(x_pos)
-        cy = self.canvas.canvasy(y_pos)
-        unscaled_cx = cx / (sf * zl)
-        unscaled_cy = cy / (sf * zl)
-
-        block_size = self.terrain_size
-        bx = int(unscaled_cx // block_size) * block_size
-        by = int(unscaled_cy // block_size) * block_size
-
-        active_layer = str(min(self.visible_layers) if self.visible_layers else 0)
-        modified = False
-
+        cx, cy = self.canvas.canvasx(x_pos), self.canvas.canvasy(y_pos)
+        unscaled_cx, unscaled_cy = cx / (sf * zl), cy / (sf * zl)
+        block_size = self.terrain_size; bx = int(unscaled_cx // block_size) * block_size; by = int(unscaled_cy // block_size) * block_size
+        active_layer = str(min(self.visible_layers) if self.visible_layers else 0); modified = False
         for x in range(bx, bx + block_size, 10):
             for y in range(by, by + block_size, 10):
                 grid_key = f"{active_layer}:{x//10},{y//10}"
-                
-                if self.terrain_color == "#ffffff": # Eraser Mode
-                    if grid_key in self.working_grid:
-                        del self.working_grid[grid_key]
-                        modified = True
-                elif self.working_grid.get(grid_key) != self.terrain_color:
-                    self.working_grid[grid_key] = self.terrain_color
-                    modified = True
-
+                if self.terrain_color == "#ffffff":
+                    if grid_key in self.working_grid: del self.working_grid[grid_key]; modified = True
+                elif self.working_grid.get(grid_key) != self.terrain_color: self.working_grid[grid_key] = self.terrain_color; modified = True
         if modified:
-            vx1 = int(bx * sf * zl)
-            vy1 = int(by * sf * zl)
-            vx2 = int((bx + block_size) * sf * zl)
-            vy2 = int((by + block_size) * sf * zl)
-            
-            # OPTIMIZATION: If the stroke is inside our pre-allocated bitmap, blit to it instantly with 0% CPU churn!
-            if (hasattr(self, "_terrain_image") and self._terrain_image and 
-                self._img_origin_x <= vx1 and self._img_origin_y <= vy1 and 
-                (vx2 - self._img_origin_x) <= self._terrain_image.width() and 
-                (vy2 - self._img_origin_y) <= self._terrain_image.height()):
-                
-                lx1 = vx1 - self._img_origin_x
-                ly1 = vy1 - self._img_origin_y
-                lx2 = vx2 - self._img_origin_x
-                ly2 = vy2 - self._img_origin_y
-                
-                # Match canvas background color when erasing to simulate alpha transparency natively
-                fill_color = "#fdf1dc" if self.terrain_color == "#ffffff" else self.terrain_color
-                self._terrain_image.put(fill_color, to=(lx1, ly1, lx2, ly2))
-            else:
-                # Fallback: Smoothly grow the bounding frame size if drawing outside current margins
-                self._render_terrain_image(sf, zl)
-                
-            # Keep line grids and nodes firmly on top of the newly blitted pixels
-            self.canvas.tag_raise("assistance_line")
-            self.canvas.tag_raise("node")
-            self.canvas.tag_raise("link")
+            vx1, vy1 = int(bx * sf * zl), int(by * sf * zl); vx2, vy2 = int((bx + block_size) * sf * zl), int((by + block_size) * sf * zl)
+            if (hasattr(self, "_terrain_image") and self._terrain_image and self._img_origin_x <= vx1 and self._img_origin_y <= vy1 and (vx2 - self._img_origin_x) <= self._terrain_image.width() and (vy2 - self._img_origin_y) <= self._terrain_image.height()):
+                lx1, ly1 = vx1 - self._img_origin_x, vy1 - self._img_origin_y; lx2, ly2 = vx2 - self._img_origin_x, vy2 - self._img_origin_y
+                self._terrain_image.put("#fdf1dc" if self.terrain_color == "#ffffff" else self.terrain_color, to=(lx1, ly1, lx2, ly2))
+            else: self._render_terrain_image(sf, zl)
+            self.canvas.tag_raise("assistance_line"); self.canvas.tag_raise("node"); self.canvas.tag_raise("link")
 
     def _load_terrain_data(self):
-        """Loads compressed rectangle structures from disk and converts them into an active working grid."""
-        self.working_grid = {}  # Active uncompressed painting cache: {"x,y": "color"}
-        self.compressed_rects = {}  # Optimization render cache: {"layer_id": [(x, y, w, h, color)]}
-        
+        self.working_grid = {}; self.compressed_rects = {}
         if self.terrain_path.exists():
             try:
-                with open(self.terrain_path, "r", encoding="utf-8") as f:
-                    self.compressed_rects = json.load(f)
-                    
-                # Hydrate the active working dictionary from the compressed file payload
+                with open(self.terrain_path, "r", encoding="utf-8") as f: self.compressed_rects = json.load(f)
                 for layer, rect_list in self.compressed_rects.items():
                     for r in rect_list:
                         rx, ry, rw, rh, color = r["x"], r["y"], r["w"], r["h"], r["color"]
                         for x in range(rx, rx + rw):
-                            for y in range(ry, ry + rh):
-                                # Working grid keys are indexed by the baseline 10px intervals
-                                self.working_grid[f"{layer}:{x},{y}"] = color
-            except Exception as e:
-                print(f"Failed to parse terrain database: {e}")
-                self.working_grid, self.compressed_rects = {}, {}
+                            for y in range(ry, ry + rh): self.working_grid[f"{layer}:{x},{y}"] = color
+            except Exception as e: print(f"Failed parsing terrain data: {e}"); self.working_grid, self.compressed_rects = {}, {}
 
     def _compress_terrain_layer(self, layer_str):
-        """Greedy 2D run-length optimization algorithm to decompose cells into minimal rectangles."""
-        layer_prefix = f"{layer_str}:"
-        cells_by_color = {}
-        
-        # Group active uncompressed grid entries by their hex color code
+        layer_prefix = f"{layer_str}:"; cells_by_color = {}
         for key, color in self.working_grid.items():
             if key.startswith(layer_prefix):
-                coord_part = key.split(":", 1)[1]
-                cx, cy = map(int, coord_part.split(","))
-                cells_by_color.setdefault(color, []).append((cx, cy))
-                
+                coord_part = key.split(":", 1)[1]; cx, cy = map(int, coord_part.split(",")); cells_by_color.setdefault(color, []).append((cx, cy))
         layer_rectangles = []
-        
         for color, coords in cells_by_color.items():
-            # Step 1: Group cells horizontally by row (Y coordinate)
             by_y = {}
-            for cx, cy in coords:
-                by_y.setdefault(cy, []).append(cx)
-                
-            # Compile consecutive horizontal blocks into 1D segments: (start_x, end_x)
+            for cx, cy in coords: by_y.setdefault(cy, []).append(cx)
             spans_by_y = {}
             for cy, x_list in by_y.items():
-                x_list.sort()
-                spans = []
+                x_list.sort(); spans = []
                 if not x_list: continue
-                start_x = x_list[0]
-                prev_x = x_list[0]
+                start_x, prev_x = x_list[0], x_list[0]
                 for cx in x_list[1:]:
-                    if cx == prev_x + 1:
-                        prev_x = cx
-                    else:
-                        spans.append((start_x, prev_x))
-                        start_x = cx
-                        prev_x = cx
-                spans.append((start_x, prev_x))
-                spans_by_y[cy] = spans
-
-            # Step 2: Merge matching horizontal spans vertically across rows
-            consumed_spans = set()
-            sorted_ys = sorted(spans_by_y.keys())
-            
+                    if cx == prev_x + 1: prev_x = cx
+                    else: spans.append((start_x, prev_x)); start_x, prev_x = cx, cx
+                spans.append((start_x, prev_x)); spans_by_y[cy] = spans
+            consumed_spans = set(); sorted_ys = sorted(spans_by_y.keys())
             for cy in sorted_ys:
                 for start_x, end_x in spans_by_y[cy]:
-                    if (cy, start_x, end_x) in consumed_spans:
-                        continue
-                        
-                    h = 1
-                    next_y = cy + 1
-                    # Look directly down for identical horizontal blocks on sequential rows
+                    if (cy, start_x, end_x) in consumed_spans: continue
+                    h, next_y = 1, cy + 1
                     while next_y in spans_by_y and (start_x, end_x) in spans_by_y[next_y]:
-                        if (next_y, start_x, end_x) not in consumed_spans:
-                            h += 1
-                            next_y += 1
-                        else:
-                            break
-                            
-                    # Mark all merged rows as consumed
-                    for ry in range(cy, cy + h):
-                        consumed_spans.add((ry, start_x, end_x))
-                        
-                    w = end_x - start_x + 1
-                    layer_rectangles.append({"x": start_x, "y": cy, "w": w, "h": h, "color": color})
-                    
-        # Update our centralized storage database payload matrix
+                        if (next_y, start_x, end_x) not in consumed_spans: h, next_y = h + 1, next_y + 1
+                        else: break
+                    for ry in range(cy, cy + h): consumed_spans.add((ry, start_x, end_x))
+                    layer_rectangles.append({"x": start_x, "y": cy, "w": end_x - start_x + 1, "h": h, "color": color})
         self.compressed_rects[layer_str] = layer_rectangles
 
     def save_terrain_to_disk(self):
-        """Runs optimization loops across all active layers and safely commits them to disk."""
-        # Find which layers have data registered inside the active working grid memory array
         active_layers = set(key.split(":", 1)[0] for key in self.working_grid.keys())
-        
-        # Ensure any layer left completely blank is wiped cleanly from the save files
         self.compressed_rects = {k: v for k, v in self.compressed_rects.items() if k in active_layers}
-        
-        # Compress layers dynamically before serialization
-        for layer in active_layers:
-            self._compress_terrain_layer(layer)
+        for layer in active_layers: self._compress_terrain_layer(layer)
+        try:
+            with open(self.terrain_path, "w", encoding="utf-8") as f: json.dump(self.compressed_rects, f, indent=4)
+        except Exception as e: print(f"Failed landscape structural data serialization: {e}")
+
+    def _get_node_icon_image(self, node_id):
+        """Fetches hardware-optimized visual pointers from memory cache, 
+        with automatic fallback to default profile assets.
+        """
+        cache_key = (node_id, self.zoom_level)
+        if hasattr(self, "_icon_image_cache") and cache_key in self._icon_image_cache:
+            return self._icon_image_cache[cache_key]
+            
+        if not hasattr(self, "_icon_image_cache"):
+            self._icon_image_cache = {}
+            
+        img_path = None
+        node_path = Path(node_id)
+        if node_path.exists() and node_path.is_dir():
+            pngs = list(node_path.glob("*.png"))
+            if pngs:
+                img_path = pngs[0]
+                
+        if not img_path:
+            # Fall back to root custom dashboard asset pointers
+            if self.mode == "location":
+                img_path = Path("./assets/icons/map_icon.png")
+            else:
+                img_path = Path("./assets/icons/event_icon.png")
+                
+        if not img_path.exists():
+            return None # Graceful safety block if files are missing entirely
             
         try:
-            with open(self.terrain_path, "w", encoding="utf-8") as f:
-                json.dump(self.compressed_rects, f, indent=4)
+            pil_img = Image.open(img_path)
+            size = max(10, int(32 * self.zoom_level))
+            
+            # FIXED: Changed from LANCEZOS to LANCZOS to resolve the cache compilation error loop
+            pil_img = pil_img.resize((size, size), Image.Resampling.BILINEAR)
+            
+            tk_img = ImageTk.PhotoImage(pil_img)
+            self._icon_image_cache[cache_key] = tk_img
+            return tk_img
         except Exception as e:
-            print(f"Failed landscape structural data dump serialization: {e}")
+            print(f"Error compiling visual image resource cache: {e}")
+            return None
+
+    def open_node_icon_selector(self):
+        """Launches the custom icon dashboard panel and copies choices to disk."""
+        if not self.selected_node_id:
+            messagebox.showinfo("Selection Required", "Please select a node on the canvas layout first.")
+            return
+            
+        def on_icon_chosen(chosen_path):
+            node_dir = Path(self.selected_node_id)
+            if node_dir.exists() and node_dir.is_dir():
+                # Purge historical items to prevent overlap drift anomalies
+                for old_png in node_dir.glob("*.png"):
+                    try: old_png.unlink()
+                    except: pass
+                
+                dest_path = node_dir / f"{node_dir.name}.png"
+                try:
+                    shutil.copy(str(chosen_path), str(dest_path))
+                    if hasattr(self, "_icon_image_cache"):
+                        self._icon_image_cache.clear() # Force redrawing fresh graphics
+                    self.draw_graph()
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed updating node custom asset icon: {e}")
+                    
+        NodeIconSelectorDialog(self, self.mode, on_icon_chosen)
+
+

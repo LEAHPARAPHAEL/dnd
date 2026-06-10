@@ -13,6 +13,9 @@ from models import Node
 from stat_renderer import StatBlockRenderer, CombatRenderer, AutoHeightText, MapGraphRenderer
 from dialogs import SpellSearchDialog, MonsterSearchDialog, EntitySelectionDialog
 import copy
+from music_service import YouTubeMusicService
+from music_panel import MusicManagerPanel
+
 
 class SyncRef(str):
     """A string subclass that enables absolute-path graph synchronization.
@@ -42,6 +45,9 @@ class DnDStatManager(tk.Tk):
         self.title("D&D Campaign Manager - Stat Blocks")
         self.geometry("1500x850")
         self.configure(bg="#fdf1dc")
+
+        self.music_service = YouTubeMusicService()
+        self.music_visible = False
         
         self.root_dir = Path(root_dir).resolve()
         
@@ -186,6 +192,9 @@ class DnDStatManager(tk.Tk):
             elif key == 'delete':
                 self._delete_active_page_sheet()
                 return "break"
+            elif key == 'w':
+                self.toggle_music_panel_visibility()
+                return "break"
         except: pass
 
     def _delete_active_page_sheet(self):
@@ -286,8 +295,8 @@ class DnDStatManager(tk.Tk):
         self.stat_viewer.set_spell_callback(self.on_spell_clicked); self.stat_viewer.set_spells_index(self.spells_index); self.stat_viewer.set_location_link_callback(self.on_location_link_clicked)
         self.stat_viewer._hover_data_resolver = self.resolve_hover_data
         self.combat_viewer = CombatRenderer(self.view_pane, open_statblock_cb=self._combat_open_statblock, save_cb=self.save_combat_edits, add_bestiary_cb=self._combat_add_bestiary, add_camp_mon_cb=self._combat_add_camp_mon, add_camp_npc_cb=self._combat_add_camp_npc, cancel_cb=self.navigate_back)
-        self.map_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.map_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="location"), mode = 'location')
-        self.events_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.events_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="event"), mode = 'event')
+        self.map_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.map_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="location", is_reference_click=True), mode = 'location')
+        self.events_graph_viewer = MapGraphRenderer(self.view_pane, map_root_dir=self.events_dir, navigate_to_node_cb=lambda n: self.open_page(n, view_type="event", is_reference_click=True), mode = 'event')
         # Monsters Indexes Dashboard
         self.search_frame = tk.Frame(self.view_pane, bg="#fdf1dc")
         tk.Label(self.search_frame, text="Monster Database", font=("Georgia", 16, "bold"), bg="#fdf1dc", fg="#7a200d").pack(pady=10)
@@ -327,7 +336,13 @@ class DnDStatManager(tk.Tk):
         s_scr = ttk.Scrollbar(s_lf, orient="vertical", command=self.spell_tree.yview); s_scr.pack(side=tk.RIGHT, fill=tk.Y); self.spell_tree.configure(yscrollcommand=s_scr.set); self.spell_tree.bind("<Double-1>", self.on_spell_manager_selected)
 
         self.placeholder_frame = tk.Frame(self.view_pane, bg="#fdf1dc"); self.placeholder_lbl = tk.Label(self.placeholder_frame, text="", font=("Georgia", 14, "italic"), bg="#fdf1dc", fg="black"); self.placeholder_lbl.pack(expand=True)
+        def commit_music_metadata_changes(meta_dict):
+            if self.current_state and self.current_state.data:
+                self.current_state.data["music"] = meta_dict
+                self._save_current_focused_sheet_data()
+                self.music_manager_ui.sync_with_active_page_context(self.current_state.data)
 
+        self.music_manager_ui = MusicManagerPanel(self.right_frame, self.music_service, commit_music_metadata_changes)
 
     def resolve_hover_data(self, prefix, name):
         """Fetches and inflates campaign JSON sheets on-the-fly for hover tooltips."""
@@ -465,49 +480,62 @@ class DnDStatManager(tk.Tk):
             self.current_state = self.current_state.prev; self._show_current_state_view()
 
     def _show_current_state_view(self):
-        for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame, self.map_graph_viewer, self.events_graph_viewer]: panel.pack_forget()
+        # 1. Clear out all viewport panel states from the screen space partition layout
+        for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame, self.map_graph_viewer, self.events_graph_viewer]: 
+            panel.pack_forget()
+            
         if not self.current_state: return
         if self.current_state.prev is None: self.back_btn.pack_forget()
         else: self.back_btn.pack(side=tk.LEFT, padx=10, pady=2)
 
-        state = self.current_state; self.page_title_lbl.config(text=f"Viewing: {state.node.name}")
+        state = self.current_state
+        self.page_title_lbl.config(text=f"Viewing: {state.node.name}")
 
+        # Local layout reference pointer to maintain standard layout states when music is hidden
+        target_panel = None
+
+        # 2. Inflate data parameters context definitions and assign the display tracking reference
         if state.view_type in ["monster", "npc"]:
-            self.stat_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.stat_viewer
             try:
                 with open(state.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
                 data = self._inflate_refs(data)
+                state.data = data
                 self.stat_viewer.render_monster(data, back_cb=self.navigate_back)
                 self.stat_viewer.add_top_buttons(state.node.path, self.view_full_portrait, lambda d: self.display_monster(state.node, edit_mode=True, back_cb=self.navigate_back))
             except Exception as e: print(f"Error loading sheet: {e}")
 
         elif state.view_type == "combat":
-            self.combat_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.combat_viewer
             try:
                 with open(state.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
                 data = self._inflate_refs(data)
+                state.data = data
                 if hasattr(self.combat_viewer, 'original_data'):
                     delattr(self.combat_viewer, 'original_data')
                 self.combat_viewer.render_combat(data, state.node.path)
             except Exception as e: print(f"Error loading combat: {e}")
 
         elif state.view_type == "spell":
-            self.stat_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.stat_viewer
             spell_data = state.data or next((s for s in self.spells_index if s["name"].lower() == state.node.name.lower()), None)
             if spell_data:
+                state.data = spell_data
                 self.stat_viewer.render_spell(spell_data, back_callback=self.navigate_back)
                 if spell_data.get("source") == "Custom":
                     self.stat_viewer.add_custom_spell_buttons(spell_data, edit_cb=lambda sd: self.stat_viewer.render_spell_edit_mode(sd, self.save_spell_edits, self.navigate_back), del_cb=self.delete_custom_spell)
             else: messagebox.showerror("Error", f"Spell lookup failed inside compendium.")
 
         elif state.node.path.resolve() == self.monsters_dir.resolve():
-            self.search_frame.pack(fill=tk.BOTH, expand=True); self.apply_monster_query()
+            target_panel = self.search_frame
+            self.apply_monster_query()
 
         elif state.node.path.resolve() == self.spells_dir.resolve() or state.node.name == "Spells":
-            self.spell_manager_frame.pack(fill=tk.BOTH, expand=True); self.apply_spell_query()
+            target_panel = self.spell_manager_frame
+            self.apply_spell_query()
             
         elif state.view_type in ["location", "event"]:
-            self.stat_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.stat_viewer
             stat_path = state.node.stat_path or (state.node.path / f"{state.node.path.name}.json")
             if not stat_path.exists():
                 default_data = {"name": state.node.name, "description": "", "monsters": [], "npcs": [], "combats": [], "events" if state.view_type == "location" else "locations": [], "objects": [], "connections": []}
@@ -515,31 +543,56 @@ class DnDStatManager(tk.Tk):
             try:
                 with open(stat_path, "r", encoding="utf-8") as f: data = json.load(f)
                 data = self._inflate_refs(data)
+                state.data = data
                 if state.view_type == "location": self.stat_viewer.render_location(data, back_cb=self.navigate_back)
                 else: self.stat_viewer.render_event(data, back_cb=self.navigate_back)
                 self.stat_viewer.add_location_top_buttons(state.node.path, lambda p: self._open_campaign_node_edit(state.node, stat_path, data, state.view_type == "location"))
             except Exception as e: print(f"Error loading tracking sheet: {e}")
 
         elif state.view_type == "object":
-            self.stat_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.stat_viewer
             try:
                 with open(state.stat_path, "r", encoding="utf-8") as f: data = json.load(f)
                 data = self._inflate_refs(data)
+                state.data = data
                 self.stat_viewer.render_object(data, back_cb=self.navigate_back)
                 self.stat_viewer.add_location_top_buttons(state.node.path, lambda p: self.open_object_edit(state.node, state.stat_path, data))
             except Exception as e: print(f"Error loading object: {e}")
 
         elif state.view_type == "root_folder" and state.node.path.resolve() == self.map_dir.resolve():
-            self.map_graph_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.map_graph_viewer
             self.map_graph_viewer.draw_graph()
         
         elif state.view_type == "root_folder" and state.node.path.resolve() == self.events_dir.resolve():
-            self.events_graph_viewer.pack(fill=tk.BOTH, expand=True)
+            target_panel = self.events_graph_viewer
             self.events_graph_viewer.draw_graph()
         
         else:
-            self.placeholder_frame.pack(fill=tk.BOTH, expand=True); self.placeholder_lbl.config(text=f"Location Directory Zone: '{state.node.name}'\nPath: {state.node.path}")
-        
+            # FIX: Clean fallback text labeling works elegantly for all structural folders
+            target_panel = self.placeholder_frame
+            self.placeholder_lbl.config(text=f"Directory Workspace Zone: '{state.node.name}'\nPath: {state.node.path}")
+
+        # EXTENSION REQUIREMENT: Lazy-load folder data configurations for directories or root pages
+        if not state.data and state.node and state.node.path:
+            dir_path = Path(state.node.path) if Path(state.node.path).is_dir() else Path(state.node.path).parent
+            if dir_path.is_dir():
+                meta_file = dir_path / "folder_metadata.json"
+                if meta_file.exists():
+                    try:
+                        with open(meta_file, "r", encoding="utf-8") as f: state.data = json.load(f)
+                    except: state.data = {"name": state.node.name}
+                else:
+                    state.data = {"name": state.node.name}
+
+        # 3. Handle conditional view packing geometry relative to the global visibility flag
+        if hasattr(self, 'music_visible') and self.music_visible:
+            self.music_manager_ui.pack(fill=tk.BOTH, expand=True)
+            self.music_manager_ui.sync_with_active_page_context(state.data if state else None)
+        else:
+            self.music_manager_ui.pack_forget()
+            if target_panel:
+                target_panel.pack(fill=tk.BOTH, expand=True)
+
         self.after(50, self.focus_set)
 
     # chips trackers
@@ -1063,7 +1116,21 @@ class DnDStatManager(tk.Tk):
                         collapse_siblings(getattr(self, 'nodes', []))
                     if not node.is_open and self.current_state and self.current_state.node.path and (self.current_state.node.path == node.path or node.path in self.current_state.node.path.parents):
                         self.open_page(Node(name="Campaign Map", path=self.map_dir, is_entity=False, level=0), view_type="root_folder")
-                    vt = "root_folder" if node.path in [self.map_dir, self.events_dir, self.objects_dir, self.spells_dir, self.monsters_dir, self.npcs_dir, self.combats_dir] else "event" if "Events" in str(node.path) else "location"
+
+                    p_res = node.path.resolve()
+                    roots = [self.map_dir.resolve(), self.events_dir.resolve(), self.objects_dir.resolve(), 
+                             self.spells_dir.resolve(), self.monsters_dir.resolve(), self.npcs_dir.resolve(), self.combats_dir.resolve()]
+                    
+                    if p_res in roots:
+                        vt = "root_folder"
+                    elif self.map_dir in node.path.parents:
+                        vt = "location"
+                    elif self.events_dir in node.path.parents:
+                        vt = "event"
+                    else:
+                        # Safe generic viewtype designation for NPC/Combat/Monster/Spell directory branches
+                        vt = "directory"
+                        
                     self.open_page(node, view_type=vt); self.refresh_tree_silent()
 
             icon_lbl.bind("<Button-1>", lambda e: click_router(e) if node.name in ["Monsters", "NPCs", "Combats", "Map", "Spells", "Events", "Objects"] or node.path.parent == self.spells_dir else self.change_folder_icon(node))
@@ -1476,6 +1543,69 @@ class DnDStatManager(tk.Tk):
             self.open_page(Node(name=nn, path=fj, is_entity=True, level=1, stat_path=fj), view_type="object", stat_path=fj, is_reference_click=False)
             
         self.stat_viewer.render_object_edit_mode(data, stat_path, on_save, lambda: self._show_current_state_view(), lambda r: EntitySelectionDialog(self, self.npcs_dir, "NPCs", lambda name: r(SyncRef(name, str((self.npcs_dir / name).resolve())))))
+
+    def toggle_music_panel_visibility(self):
+        """Swaps the entire right pane view between the active entity sheet and the music manager panel."""
+        if not hasattr(self, 'music_visible'):
+            self.music_visible = False
+            
+        if self.music_visible:
+            self.music_visible = False
+            self.music_manager_ui.pack_forget()
+            
+            # Re-pack the core layout components to occupy full frame again
+            self.nav_bar.pack(fill=tk.X, padx=10, pady=5)
+            self.view_pane.pack(fill=tk.BOTH, expand=True)
+            self._show_current_state_view()
+        else:
+            self.music_visible = True
+            
+            # Conceal the navbar and view pane to prevent overlapping background elements
+            self.nav_bar.pack_forget()
+            self.view_pane.pack_forget()
+            
+            # Pack the music manager to take up 100% of the right frame dimensions
+            self.music_manager_ui.pack(fill=tk.BOTH, expand=True)
+            if self.current_state and self.current_state.data:
+                self.music_manager_ui.sync_with_active_page_context(self.current_state.data)
+            else:
+                self.music_manager_ui.sync_with_active_page_context(None)
+        return "break"
+
+    def _save_current_focused_sheet_data(self):
+        """Automated file serialization method that securely writes modifications 
+
+        to disk, handling both standalone sheets and directory root metadata configurations.
+        """
+        if not self.current_state: return
+        
+        target_path = None
+        is_directory_meta = False
+
+        # Identify where to write changes safely
+        if self.current_state.stat_path:
+            target_path = Path(self.current_state.stat_path)
+        elif self.current_state.node and self.current_state.node.path:
+            dir_check = Path(self.current_state.node.path)
+            if dir_check.is_dir():
+                target_path = dir_check / "folder_metadata.json"
+                is_directory_meta = True
+
+        if not target_path: return
+
+        try:
+            if is_directory_meta:
+                # Direct serialization for folder configurations (no complex references present)
+                serialized_data = self.current_state.data
+            else:
+                # Standard structural entity configuration cleaning sequence
+                serialized_data = self._serialize_refs(copy.deepcopy(self.current_state.data))
+                
+            with open(target_path, "w", encoding="utf-8") as f:
+                json.dump(serialized_data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to record workspace entity music metadata updates: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser()

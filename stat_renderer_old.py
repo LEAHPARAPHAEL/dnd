@@ -45,10 +45,10 @@ class AutoHeightText(tk.Text):
         self.canvas_to_refresh = canvas_to_refresh
         self._last_width = 0
         
-        self.bind("<KeyRelease>", lambda e: self.adjust_height())
+        self.bind("<KeyRelease>", lambda e=None: self.adjust_height())
         self.bind("<Configure>", self._on_configure)
         self.bind("<<Modified>>", self._on_modified)
-        self.bind("<Map>", lambda e: self.after(10, self.adjust_height))
+        self.bind("<Map>", lambda e=None: self.after(10, self.adjust_height))
 
     def _on_configure(self, event):
         if event.width != self._last_width:
@@ -180,8 +180,8 @@ class StatBlockRenderer(tk.Frame):
         self.edit_inner = tk.Frame(self.edit_canvas, bg="#fdf1dc", padx=40, pady=20)
         self.edit_scroll.pack(side=tk.RIGHT, fill=tk.Y); self.edit_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.edit_window = self.edit_canvas.create_window((0, 0), window=self.edit_inner, anchor="nw")
-        self.edit_inner.bind("<Configure>", lambda e: self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))
-        self.edit_canvas.bind("<Configure>", lambda e: self.edit_canvas.itemconfig(self.edit_window, width=e.width))
+        self.edit_inner.bind("<Configure>", lambda e=None: self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))
+        self.edit_canvas.bind("<Configure>", lambda e=None: self.edit_canvas.itemconfig(self.edit_window, width=e.width))
         self.edit_canvas.configure(yscrollcommand=self.edit_scroll.set)
 
         self.dividers = []; self.overlay_buttons = []
@@ -190,7 +190,7 @@ class StatBlockRenderer(tk.Frame):
 
         self._setup_fonts_and_tags()
         self.v_scroll.config(command=self.text.yview)
-        self.text.bind("<Configure>", lambda e: [div.configure(width=max(10, e.width - 80)) for div in self.dividers if div.winfo_exists()])
+        self.text.bind("<Configure>", lambda e=None: [div.configure(width=max(10, e.width - 80)) for div in self.dividers if div.winfo_exists()])
 
         def redirect_scroll_to_popup(event):
             if hasattr(self, "_hover_popup") and self._hover_popup and self._hover_popup.winfo_exists():
@@ -2537,6 +2537,7 @@ class MapGraphRenderer(tk.Frame):
         self.mode = mode  # "location" or "event"
         self.label_prefix = "Layer" if self.mode == "location" else "Priority"
         self.data_key = "depths" if self.mode == "location" else "priority"
+        self.node_sizes = {}
 
         # Active Mode Controllers
         self.current_mode = "select"  # "select", "edge", "parent", "new", "delete", "terrain"
@@ -2730,6 +2731,24 @@ class MapGraphRenderer(tk.Frame):
                 return True
             elif key in ['minus', 'underscore', 'subtract']:
                 self._adjust_selected_node_depth(-1)
+                return True
+            elif key in ['Up', 'up']:
+                cur_size = self.node_sizes.get(self.selected_node_id, 32)
+                new_size = min(80, cur_size + 8)
+                if new_size != cur_size:
+                    self.node_sizes[self.selected_node_id] = new_size
+                    current_width = max(100, self.canvas.winfo_width())
+                    self._write_current_layout_to_disk(current_width, dragged_id=self.selected_node_id)
+                    self.draw_graph()
+                return True
+            elif key in ['Down', 'down']:
+                cur_size = self.node_sizes.get(self.selected_node_id, 32)
+                new_size = max(24, cur_size - 8)
+                if new_size != cur_size:
+                    self.node_sizes[self.selected_node_id] = new_size
+                    current_width = max(100, self.canvas.winfo_width())
+                    self._write_current_layout_to_disk(current_width, dragged_id=self.selected_node_id)
+                    self.draw_graph()
                 return True
 
         # FALLBACK: If no node profile is selected, keys map to the hotbar palette swatches
@@ -2938,6 +2957,9 @@ class MapGraphRenderer(tk.Frame):
 
         for node_id in G.nodes:
             if node_id not in visible_nodes: continue
+            node_size = saved_nodes.get(node_id, {}).get("size", 32)
+            self.node_sizes[node_id] = node_size
+            
             if node_id in saved_nodes and isinstance(saved_nodes[node_id], dict) and "x" in saved_nodes[node_id]:
                 center_x = int(saved_nodes[node_id]["x"] * scale_factor * self.zoom_level)
                 center_y = int(saved_nodes[node_id]["y"] * scale_factor * self.zoom_level)
@@ -2945,13 +2967,13 @@ class MapGraphRenderer(tk.Frame):
                 coords = raw_pos[node_id]; norm_x = (coords[0] - min_x) / x_range; norm_y = (coords[1] - min_y) / y_range
                 base_x, base_y = int((0.15 + norm_x * 0.70) * 1000), int((0.15 + norm_y * 0.70) * 800)
                 center_x, center_y = int(base_x * scale_factor * self.zoom_level), int(base_y * scale_factor * self.zoom_level)
-                saved_nodes[node_id] = {"x": base_x, "y": base_y}; needs_save_update = True
+                saved_nodes[node_id] = {"x": base_x, "y": base_y, "size": node_size}; needs_save_update = True
             self.node_centers[node_id] = [center_x, center_y]
 
         if needs_save_update: self._write_current_layout_to_disk(current_canvas_width)
 
         arrow_padding = self.node_radius + max(2, int(4 * scale_factor * self.zoom_level))
-        edge_thickness = max(1, int(2 * self.zoom_level))
+        edge_thickness = max(1, int(1.2 * self.zoom_level))
         
         for u, v, edge_data in G.edges(data=True):
             if u not in visible_nodes or v not in visible_nodes: continue
@@ -2959,17 +2981,23 @@ class MapGraphRenderer(tk.Frame):
                 ux, uy = self.node_centers[u]; vx, vy = self.node_centers[v]
                 desc = edge_data.get("description", ""); dx, dy = vx - ux, vy - uy; length = math.hypot(dx, dy) or 1
                 
+                # DYNAMIC REQUIREMENT: Fetch individual padding metrics per source/target pair
+                rad_u = int((self.node_sizes.get(u, 32) / 2) * self.zoom_level)
+                rad_v = int((self.node_sizes.get(v, 32) / 2) * self.zoom_level)
+                
+                arrow_padding_u = rad_u + max(2, int(4 * scale_factor * self.zoom_level))
+                arrow_padding_v = rad_v + max(2, int(4 * scale_factor * self.zoom_level))
+                
                 is_edge_selected = (self.selected_edge_id == (u, v))
                 if is_edge_selected:
                     current_fill = "#ff9900"; current_thick = max(4, int(5 * self.zoom_level))
                 else:
-                    # CHANGE: Color line based on the lowest layer of the target node 'v'
-                    target_info = self.nodes_map.get(v)
-                    if target_info and "depths" in target_info:
-                        current_fill = self._get_layer_color(min(target_info["depths"]))
+                    if edge_data.get("type") == "structure":
+                        current_fill = "#ffffff"; current_thick = max(1, int(1.0 * self.zoom_level))
                     else:
-                        current_fill = "#000000"
-                    current_thick = edge_thickness if edge_data.get("type") == "connection" else max(1, int(1*self.zoom_level))
+                        current_fill = "#000000"; current_thick = edge_thickness
+                
+                a_shape = (max(5, int(7 * self.zoom_level)), max(6, int(8 * self.zoom_level)), max(2, int(2.5 * self.zoom_level)))
                 
                 if edge_data.get("type") == "connection":
                     if G.has_edge(v, u) and G[v][u].get("type") == "connection":
@@ -2978,73 +3006,65 @@ class MapGraphRenderer(tk.Frame):
                         ctrl_x = mid_x + nx_val * (35 * self.zoom_level)
                         ctrl_y = mid_y + ny_val * (35 * self.zoom_level)
                         tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
-                        end_x = vx - (tdx / t_length) * arrow_padding if t_length > arrow_padding else vx
-                        end_y = vy - (tdy / t_length) * arrow_padding if t_length > arrow_padding else vy
                         
-                        # CHANGE: Offset curved start along vector pointing to control vertex
+                        end_x = vx - (tdx / t_length) * arrow_padding_v if t_length > arrow_padding_v else vx
+                        end_y = vy - (tdy / t_length) * arrow_padding_v if t_length > arrow_padding_v else vy
+                        
                         fdx, fdy = ctrl_x - ux, ctrl_y - uy
                         f_length = math.hypot(fdx, fdy) or 1
-                        start_x = ux + (fdx / f_length) * arrow_padding if f_length > arrow_padding else ux
-                        start_y = uy + (fdy / f_length) * arrow_padding if f_length > arrow_padding else uy
+                        start_x = ux + (fdx / f_length) * arrow_padding_u if f_length > arrow_padding_u else ux
+                        start_y = uy + (fdy / f_length) * arrow_padding_u if f_length > arrow_padding_u else uy
                         
-                        line_id = self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
-                        self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding": arrow_padding})
+                        line_id = self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, fill=current_fill, width=current_thick, dash=(4, 4), arrowshape=a_shape, tags=(f"from:{u}", f"to:{v}", "edge"))
+                        self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": True, "padding_u": arrow_padding_u, "padding_v": arrow_padding_v})
                     else:
-                        end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
-                        end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
+                        end_x = vx - (dx / length) * arrow_padding_v if length > arrow_padding_v else vx
+                        end_y = vy - (dy / length) * arrow_padding_v if length > arrow_padding_v else vy
                         
-                        # CHANGE: Offset straight link start coordinate symmetric to end target
-                        start_x = ux + (dx / length) * arrow_padding if length > arrow_padding else ux
-                        start_y = uy + (dy / length) * arrow_padding if length > arrow_padding else uy
+                        start_x = ux + (dx / length) * arrow_padding_u if length > arrow_padding_u else ux
+                        start_y = uy + (dy / length) * arrow_padding_u if length > arrow_padding_u else uy
                         
-                        line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, arrow=tk.LAST, fill=current_fill, width=current_thick, arrowshape=(max(6, int(10*self.zoom_level)), max(8, int(12*self.zoom_level)), max(3, int(4*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
-                        self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
+                        line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, arrow=tk.LAST, fill=current_fill, width=current_thick, dash=(4, 4), arrowshape=a_shape, tags=(f"from:{u}", f"to:{v}", "edge"))
+                        self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding_u": arrow_padding_u, "padding_v": arrow_padding_v})
                     if desc:
                         self.canvas.tag_bind(line_id, "<Enter>", lambda e, lid=line_id, d=desc: self._on_edge_enter(e, lid, d))
                         self.canvas.tag_bind(line_id, "<Motion>", self._on_edge_motion)
                         self.canvas.tag_bind(line_id, "<Leave>", lambda e, lid=line_id: self._on_edge_leave(e, lid))
                 else:
-                    end_x = vx - (dx / length) * arrow_padding if length > arrow_padding else vx
-                    end_y = vy - (dy / length) * arrow_padding if length > arrow_padding else vy
+                    end_x = vx - (dx / length) * arrow_padding_v if length > arrow_padding_v else vx
+                    end_y = vy - (dy / length) * arrow_padding_v if length > arrow_padding_v else vy
                     
-                    # CHANGE: Apply padding logic to structural dashed lines as well
-                    start_x = ux + (dx / length) * arrow_padding if length > arrow_padding else ux
-                    start_y = uy + (dy / length) * arrow_padding if length > arrow_padding else uy
+                    start_x = ux + (dx / length) * arrow_padding_u if length > arrow_padding_u else ux
+                    start_y = uy + (dy / length) * arrow_padding_u if length > arrow_padding_u else uy
                     
-                    # CHANGE: Color parent structural line based on target layer when unselected
-                    if not is_edge_selected:
-                        target_info = self.nodes_map.get(v)
-                        edge_fill = self._get_layer_color(min(target_info["depths"])) if (target_info and "depths" in target_info) else "#555555"
-                    else:
-                        edge_fill = current_fill
-                        
-                    line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, fill=edge_fill, dash=(4, 4), width=current_thick, arrow=tk.LAST, arrowshape=(max(5, int(8*self.zoom_level)), max(6, int(10*self.zoom_level)), max(2, int(3*self.zoom_level))), tags=(f"from:{u}", f"to:{v}", "edge"))
-                    self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding": arrow_padding})
+                    line_id = self.canvas.create_line(start_x, start_y, end_x, end_y, fill=current_fill, dash=(4, 4), width=current_thick, arrow=tk.LAST, arrowshape=a_shape, tags=(f"from:{u}", f"to:{v}", "edge"))
+                    self.edge_registry.append({"id": line_id, "u": u, "v": v, "curved": False, "padding_u": arrow_padding_u, "padding_v": arrow_padding_v})
 
-        text_offset = self.node_radius + max(4, int(8 * scale_factor * self.zoom_level))
-        font_size = max(7, int(10 * self.zoom_level))
-        
+        font_size = max(7, int(9 * self.zoom_level))
         for node_id, (center_x, center_y) in self.node_centers.items():
             if node_id not in visible_nodes: continue
             info = self.nodes_map[node_id]; node_obj = info["node"]
             bg_color = self._get_layer_color(info.get("depths", [0])[0])
             is_slc = (node_id == self.selected_node_id) or (node_id == self._edge_start_node) or (node_id == self._new_node_parent_id)
             
-            # Shared tags for all components of this node
+            # Look up dynamic sizes and calculate radius metric variables locally
+            n_size = self.node_sizes.get(node_id, 32)
+            n_radius = int((n_size / 2) * self.zoom_level)
+            text_offset = n_radius + max(4, int(8 * scale_factor * self.zoom_level))
+            
             node_tags = ("node", "drag_handle", f"path:{node_id}", f"group:{node_id}")
             
-            img_obj = self._get_node_icon_image(node_id)
+            img_obj = self._get_node_icon_image(node_id, n_size) # PASS TARGET INDIVIDUAL SIZE
             if img_obj:
                 self.canvas.create_image(center_x, center_y, image=img_obj, tags=node_tags)
                 if is_slc:
-                    # CHANGE: Swap fixed blue outline for dynamic layer color
-                    self.canvas.create_rectangle(center_x - self.node_radius - 2, center_y - self.node_radius - 2, 
-                                                center_x + self.node_radius + 2, center_y + self.node_radius + 2, 
-                                                outline=bg_color, width=3, tags=node_tags)
+                    self.canvas.create_rectangle(center_x - n_radius - 2, center_y - n_radius - 2, 
+                                                 center_x + n_radius + 2, center_y + n_radius + 2, 
+                                                 outline="#4a90e2", width=3, tags=node_tags)
             else:
                 border_w = 4 if is_slc else (1 if node_obj.is_entity else 2)
                 outline_color = "#4a90e2" if is_slc else "#58180d"
-                self.canvas.create_oval(center_x - self.node_radius, center_y - self.node_radius, center_x + self.node_radius, center_y + self.node_radius, 
+                self.canvas.create_oval(center_x - n_radius, center_y - n_radius, center_x + n_radius, center_y + n_radius, 
                                         fill=bg_color, outline=outline_color, width=border_w, tags=node_tags)
             # --- FIXED: UNNESTED OUTSIDE THE IF/ELSE GEOMETRY CHECKER ---
             dx_sum, dy_sum = 0, 0
@@ -3063,7 +3083,7 @@ class MapGraphRenderer(tk.Frame):
             text_anchor = tk.S if dy_sum >= 0 else tk.N  
 
             text_id = self.canvas.create_text(text_x, text_y, text=info["name"], font=("Georgia", font_size, "bold", "underline"), 
-                                      fill=bg_color, width=int(150*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
+                                              fill="#4a90e2", width=int(120*self.zoom_level), justify="center", anchor=text_anchor, tags=("link", node_id, f"group:{node_id}"))
             self.canvas.tag_bind(text_id, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
             self.canvas.tag_bind(text_id, "<Leave>", lambda e: self.canvas.config(cursor=""))
             
@@ -3192,32 +3212,38 @@ class MapGraphRenderer(tk.Frame):
 
         for edge in self.edge_registry:
             if edge["u"] == self._drag_node_id or edge["v"] == self._drag_node_id:
-                ux, uy = self.node_centers[edge["u"]]; vx, vy = self.node_centers[edge["v"]]; p = edge["padding"]
+                ux, uy = self.node_centers[edge["u"]]; vx, vy = self.node_centers[edge["v"]]
+                
+                # FIX: Extract the specialized source/target padding thresholds safely
+                p_u = edge.get("padding_u", edge.get("padding", 16))
+                p_v = edge.get("padding_v", edge.get("padding", 16))
+                
                 lx, ly = vx - ux, vy - uy; length = math.hypot(lx, ly) or 1
                 if edge["curved"]:
                     mid_x, mid_y = (ux + vx) / 2, (uy + vy) / 2
                     nx_val, ny_val = -ly / length, lx / length
                     ctrl_x, ctrl_y = mid_x + nx_val * (35 * self.zoom_level), mid_y + ny_val * (35 * self.zoom_level)
                     tdx, tdy = vx - ctrl_x, vy - ctrl_y; t_length = math.hypot(tdx, tdy) or 1
-                    end_x = vx - (tdx / t_length) * p if t_length > p else vx
-                    end_y = vy - (tdy / t_length) * p if t_length > p else vy
+                    end_x = vx - (tdx / t_length) * p_v if t_length > p_v else vx
+                    end_y = vy - (tdy / t_length) * p_v if t_length > p_v else vy
                     
-                    # MODIFICATION: Re-calculate padded start positioning for curved motion adjustments
+                    # Apply padded source node dynamic offset coordinates
                     fdx, fdy = ctrl_x - ux, ctrl_y - uy
                     f_length = math.hypot(fdx, fdy) or 1
-                    start_x = ux + (fdx / f_length) * p if f_length > p else ux
-                    start_y = uy + (fdy / f_length) * p if f_length > p else uy
+                    start_x = ux + (fdx / f_length) * p_u if f_length > p_u else ux
+                    start_y = uy + (fdy / f_length) * p_u if f_length > p_u else uy
                     
                     self.canvas.coords(edge["id"], start_x, start_y, ctrl_x, ctrl_y, end_x, end_y)
                 else:
-                    end_x = vx - (lx / length) * p if length > p else vx
-                    end_y = vy - (ly / length) * p if length > p else vy
+                    end_x = vx - (lx / length) * p_v if length > p_v else vx
+                    end_y = vy - (ly / length) * p_v if length > p_v else vy
                     
-                    # MODIFICATION: Re-calculate padded start positioning for straight motion adjustments
-                    start_x = ux + (lx / length) * p if length > p else ux
-                    start_y = uy + (ly / length) * p if length > p else uy
+                    # Apply padded source node dynamic offset coordinates
+                    start_x = ux + (lx / length) * p_u if length > p_u else ux
+                    start_y = uy + (ly / length) * p_u if length > p_u else uy
                     
                     self.canvas.coords(edge["id"], start_x, start_y, end_x, end_y)
+                    
         self._drag_start_x, self._drag_start_y = cur_x, cur_y; self._update_scroll_region()
 
     def _on_node_release(self, event):
@@ -3433,11 +3459,18 @@ class MapGraphRenderer(tk.Frame):
             except: pass
         sf = current_width / self.current_file_ref_width if self.current_file_ref_width > 0 else 1.0
         zl = self.zoom_level if self.zoom_level > 0 else 1.0
+        
+        # Helper configuration to maintain and store custom individual sizes
+        def get_node_entry(nid, cx, cy):
+            base_size = self.node_sizes.get(nid, saved_nodes.get(nid, {}).get("size", 32))
+            return {"x": int(round(cx / (sf * zl))), "y": int(round(cy / (sf * zl))), "size": base_size}
+
         if dragged_id and dragged_id in self.node_centers:
             cx, cy = self.node_centers[dragged_id]
-            saved_nodes[dragged_id] = {"x": int(round(cx / (sf * zl))), "y": int(round(cy / (sf * zl)))}
+            saved_nodes[dragged_id] = get_node_entry(dragged_id, cx, cy)
         else:
-            for nid, (cx, cy) in self.node_centers.items(): saved_nodes[nid] = {"x": int(round(cx / (sf * zl))), "y": int(round(cy / (sf * zl)))}
+            for nid, (cx, cy) in self.node_centers.items(): 
+                saved_nodes[nid] = get_node_entry(nid, cx, cy)
         try:
             with open(self.layout_path, "w", encoding="utf-8") as f: json.dump({"reference_width": self.current_file_ref_width, "nodes": saved_nodes}, f, indent=4)
         except Exception as e: print(f"Failed layout write: {e}")
@@ -3615,11 +3648,12 @@ class MapGraphRenderer(tk.Frame):
             with open(self.terrain_path, "w", encoding="utf-8") as f: json.dump(self.compressed_rects, f, indent=4)
         except Exception as e: print(f"Failed landscape structural data serialization: {e}")
 
-    def _get_node_icon_image(self, node_id):
+    def _get_node_icon_image(self, node_id, base_size=32):
         """Fetches hardware-optimized visual pointers from memory cache, 
         with automatic fallback to default profile assets.
         """
-        cache_key = (node_id, self.zoom_level)
+        # QUALITY ENHANCEMENT: Incorporate individual unscaled base_size into cache keys
+        cache_key = (node_id, self.zoom_level, base_size)
         if hasattr(self, "_icon_image_cache") and cache_key in self._icon_image_cache:
             return self._icon_image_cache[cache_key]
             
@@ -3634,21 +3668,19 @@ class MapGraphRenderer(tk.Frame):
                 img_path = pngs[0]
                 
         if not img_path:
-            # Fall back to root custom dashboard asset pointers
             if self.mode == "location":
                 img_path = Path("./assets/icons/map_icon.png")
             else:
                 img_path = Path("./assets/icons/event_icon.png")
                 
         if not img_path.exists():
-            return None # Graceful safety block if files are missing entirely
+            return None
             
         try:
             pil_img = Image.open(img_path)
-            size = max(10, int(32 * self.zoom_level))
-            
-            # FIXED: Changed from LANCEZOS to LANCZOS to resolve the cache compilation error loop
-            pil_img = pil_img.resize((size, size), Image.Resampling.BILINEAR)
+            # Resize directly from full resolution disk file to avoid texture scaling artifacts
+            size = max(10, int(base_size * self.zoom_level))
+            pil_img = pil_img.resize((size, size), Image.Resampling.LANCZOS)
             
             tk_img = ImageTk.PhotoImage(pil_img)
             self._icon_image_cache[cache_key] = tk_img

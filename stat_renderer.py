@@ -8,6 +8,8 @@ from dialogs import SpellSearchDialog, DepthsSelectionDialog, TerrainSettingsDia
 from pathlib import Path
 from PIL import Image, ImageTk
 import shutil
+from dialogs import EntitySelectionDialog
+
 
 # ==================== CONDITIONS DATABASE ====================
 CONDITIONS_DB = {
@@ -345,6 +347,14 @@ class StatBlockRenderer(tk.Frame):
         b_del = tk.Button(self.view_container, text="DELETE", bg="#ff4d4d", fg="white", font=("Georgia", 10, "bold"), command=lambda: del_cb(s_data))
         b_del.place(relx=1.0, x=-90, y=10, width=70, height=30)
         b_edit = tk.Button(self.view_container, text="EDIT", bg="#8a8a8a", fg="white", font=("Georgia", 10, "bold"), command=lambda: edit_cb(s_data))
+        b_edit.place(relx=1.0, x=-170, y=10, width=70, height=30)
+        self.overlay_buttons.extend([b_del, b_edit])
+
+    def add_custom_object_buttons(self, o_data, edit_cb, del_cb):
+        self.clear_overlays()
+        b_del = tk.Button(self.view_container, text="DELETE", bg="#ff4d4d", fg="white", font=("Georgia", 10, "bold"), command=lambda: del_cb(o_data))
+        b_del.place(relx=1.0, x=-90, y=10, width=70, height=30)
+        b_edit = tk.Button(self.view_container, text="EDIT", bg="#8a8a8a", fg="white", font=("Georgia", 10, "bold"), command=lambda: edit_cb(o_data))
         b_edit.place(relx=1.0, x=-170, y=10, width=70, height=30)
         self.overlay_buttons.extend([b_del, b_edit])
 
@@ -1699,19 +1709,45 @@ class StatBlockRenderer(tk.Frame):
         self.dividers.clear()
 
         self.text.insert(tk.END, data.get("name", "Unknown Object") + "\n", "title")
+        
+        source = data.get("source", "")
+        page = data.get("page", "")
+        src_str = f"{source} p. {page}\n" if page else f"{source}\n" if source else ""
+        if src_str:
+            self.text.insert(tk.END, src_str, "subtitle")
+
+        i_type = "Wondrous Item" if data.get("wondrous") else data.get("type", "Wondrous Item")
+        rarity = str(data.get("rarity", "Common")).title()
+        
+        req_attune = data.get("reqAttune") or data.get("attunement_details")
+        attune_str = ""
+        if data.get("attunement") or req_attune:
+            if isinstance(req_attune, str) and req_attune.strip() and req_attune.strip().lower() != "true":
+                attune_text = req_attune.strip()
+                if attune_text.lower().startswith("by "):
+                    attune_text = "By " + attune_text[3:]
+                attune_str = f" (Requires Attunement {attune_text})"
+            else:
+                attune_str = " (Requires Attunement)"
+                
+        # FIXED: Changed from unconfigured "body_bold" tag to the configured "bold" tag
+        self.text.insert(tk.END, f"{i_type}, {rarity}{attune_str}\n", "subtitle")
         self.insert_divider()
 
-        desc = data.get("description", "")
-        if desc:
-            self.text.insert(tk.END, "Description\n", "section_header")
-            self.insert_divider()
-            self.text.insert(tk.END, desc + "\n\n", "body")
+        desc_list = data.get("entries", []) or data.get("description", [])
+        if isinstance(desc_list, str):
+            desc_list = [desc_list]
+            
+        if desc_list:
+            for entry in desc_list:
+                # Routes processing through the recursive layout element walker
+                self._render_custom_entry_element(entry)
 
         effect = data.get("effect", "")
         if effect:
             self.text.insert(tk.END, "Effect\n", "section_header")
             self.insert_divider()
-            self.text.insert(tk.END, effect + "\n\n", "body")
+            self.insert_text_with_links(effect + "\n\n", "body")
 
         owners = data.get("owners", [])
         if owners:
@@ -1742,7 +1778,7 @@ class StatBlockRenderer(tk.Frame):
 
         self.text.config(state=tk.DISABLED)
 
-    def render_object_edit_mode(self, data, obj_dir, save_callback, cancel_callback, add_existing_npc_cb):
+    def render_object_edit_mode(self, data, save_callback, cancel_callback, add_existing_npc_cb):
         self.clear_overlays()
         self.view_container.pack_forget()
         self.edit_container.pack(fill=tk.BOTH, expand=True)
@@ -1750,6 +1786,7 @@ class StatBlockRenderer(tk.Frame):
 
         self.is_object_mode = True
         self.edit_data = copy.deepcopy(data)
+        self.original_object_name = self.edit_data.get("name", "Unknown Object")
         for k in ["owners", "trait", "action", "spellcasting"]:
             self.edit_data.setdefault(k, [])
 
@@ -1766,17 +1803,8 @@ class StatBlockRenderer(tk.Frame):
         def sync_all_sc():
             for sc_dict_ref, _, ab_var, dc_var, hit_var, slots_entries in self.sc_refs:
                 try:
-                    if not getattr(self, 'is_object_mode', False):
-                        sc_dict_ref["ability"] = ab_var.get().lower()
-                        dc_val = dc_var.get().strip()
-                        sc_dict_ref["custom_dc"] = int(dc_val) if dc_val.isdigit() else 10
-                        hit_val = hit_var.get().strip()
-                        sc_dict_ref["custom_hit"] = int(hit_val) if hit_val.lstrip('+-').isdigit() else 2
-                        if "spells" in sc_dict_ref:
-                            for lvl, se in slots_entries.items():
-                                val = se.get().strip()
-                                if val.isdigit() and lvl in sc_dict_ref["spells"]:
-                                    sc_dict_ref["spells"][lvl]["slots"] = int(val)
+                    if getattr(self, 'is_object_mode', False):
+                        sc_dict_ref["name"] = "Spellcasting"
                 except Exception: pass
 
         def rebuild_all_sc():
@@ -1787,7 +1815,32 @@ class StatBlockRenderer(tk.Frame):
 
         def handle_save():
             self.edit_data["name"] = name_entry.get().strip()
-            self.edit_data["description"] = desc_text.get("1.0", "end-1c").strip()
+            self.edit_data["source"] = source_entry.get().strip()
+            
+            p_val = page_entry.get().strip()
+            if p_val.isdigit(): self.edit_data["page"] = int(p_val)
+            elif "page" in self.edit_data: self.edit_data.pop("page", None)
+                
+            self.edit_data["type"] = type_entry.get().strip()
+            self.edit_data["rarity"] = rarity_entry.get().strip().lower()
+            
+            # --- Synchronize Decomposed Attunement Fields Safely ---
+            is_attuned = bool(attune_var.get())
+            try:
+                detail_txt = attune_details_entry.get("1.0", "end-1c").strip()
+            except:
+                detail_txt = attune_details_entry.get().strip()
+                
+            self.edit_data["attunement"] = is_attuned
+            self.edit_data["attunement_details"] = detail_txt if is_attuned else ""
+            if is_attuned:
+                self.edit_data["reqAttune"] = detail_txt if detail_txt else True
+            else:
+                self.edit_data["reqAttune"] = False
+
+            desc_val = desc_text.get("1.0", "end-1c").strip()
+            self.edit_data["entries"] = [line for line in desc_val.split("\n") if line]
+            
             self.edit_data["effect"] = effect_text.get("1.0", "end-1c").strip()
             self.edit_data["owners"] = [o["name"] for o in owner_items]
             sync_all_sc()
@@ -1805,28 +1858,66 @@ class StatBlockRenderer(tk.Frame):
                 if pi: self.edit_data[k] = pi
                 else: self.edit_data.pop(k, None)
                 
-            save_callback(obj_dir, self.edit_data)
+            save_callback(self.original_object_name, self.edit_data)
 
         tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=handle_save).pack(side=tk.RIGHT, padx=5)
-        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=cancel_callback).pack(side=tk.RIGHT, padx=5)
+        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=lambda: self._cancel_edit(cancel_callback)).pack(side=tk.RIGHT, padx=5)
 
         basic_frame = tk.Frame(self.edit_inner, bg="#fdf1dc")
         basic_frame.pack(fill=tk.X, pady=10)
         
-        tk.Label(basic_frame, text="Name:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=0, column=0, sticky="e", padx=5, pady=2)
-        name_entry = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=50, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        name_entry.insert(0, self.edit_data.get("name", obj_dir.stem))
-        name_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        # Grid Field Generation Matrix Array Loop
+        fields = [
+            ("Name:", "name", self.edit_data.get("name", self.original_object_name), 50),
+            ("Source:", "source", self.edit_data.get("source", "Custom"), 50),
+            ("Page:", "page", str(self.edit_data.get("page", "")), 10),
+            ("Type:", "type", "Wondrous Item" if self.edit_data.get("wondrous") else self.edit_data.get("type", "Wondrous Item"), 50),
+            ("Rarity:", "rarity", str(self.edit_data.get("rarity", "Common")).title(), 50)
+        ]
+        
+        refs = {}
+        for idx, (label_txt, dict_key, initial_val, width_val) in enumerate(fields):
+            tk.Label(basic_frame, text=label_txt, bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=idx, column=0, sticky="e", padx=5, pady=2)
+            en = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=width_val, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            en.insert(0, str(initial_val))
+            en.grid(row=idx, column=1, sticky="w", padx=5, pady=2)
+            refs[dict_key] = en
+            
+        name_entry, source_entry, page_entry, type_entry, rarity_entry = refs["name"], refs["source"], refs["page"], refs["type"], refs["rarity"]
 
-        tk.Label(basic_frame, text="Description:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=1, column=0, sticky="ne", padx=5, pady=2)
+        # --- Explicit Decomposed Attunement Grid Row Creation (Row 5) ---
+        tk.Label(basic_frame, text="Attunement:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=5, column=0, sticky="e", padx=5, pady=2)
+        attune_frame = tk.Frame(basic_frame, bg="#fdf1dc")
+        attune_frame.grid(row=5, column=1, sticky="w", padx=5, pady=2)
+
+        # Deconstruct boolean initial checking state
+        has_attune_init = bool(self.edit_data.get("attunement") or self.edit_data.get("reqAttune"))
+        attune_var = tk.BooleanVar(value=has_attune_init)
+        attune_chk = tk.Checkbutton(attune_frame, variable=attune_var, bg="#fdf1dc", activebackground="#fdf1dc")
+        attune_chk.pack(side=tk.LEFT)
+
+        # Deconstruct initial textual requirements strings
+        init_details = self.edit_data.get("attunement_details", "")
+        if not init_details and isinstance(self.edit_data.get("reqAttune"), str):
+            init_details = self.edit_data["reqAttune"]
+
+        attune_details_entry = AutoHeightText(attune_frame, canvas_to_refresh=self.edit_canvas, width=40, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+        attune_details_entry.insert(0, str(init_details))
+        attune_details_entry.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Adjust the description and effect row layouts to populate next sequence indices (Rows 6 & 7)
+        tk.Label(basic_frame, text="Description Entries:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=6, column=0, sticky="ne", padx=5, pady=2)
         desc_text = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=60, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        desc_text.insert("1.0", self.edit_data.get("description", ""))
-        desc_text.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+        
+        raw_entries = self.edit_data.get("entries", [])
+        desc_init = "\n".join(raw_entries) if isinstance(raw_entries, list) else str(raw_entries)
+        desc_text.insert("1.0", desc_init)
+        desc_text.grid(row=6, column=1, sticky="w", padx=5, pady=2)
 
-        tk.Label(basic_frame, text="Effect:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=2, column=0, sticky="ne", padx=5, pady=2)
+        tk.Label(basic_frame, text="Effect Summary:", bg="#fdf1dc", font=self.body_bold, fg="black").grid(row=7, column=0, sticky="ne", padx=5, pady=2)
         effect_text = AutoHeightText(basic_frame, canvas_to_refresh=self.edit_canvas, width=60, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
         effect_text.insert("1.0", self.edit_data.get("effect", ""))
-        effect_text.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+        effect_text.grid(row=7, column=1, sticky="w", padx=5, pady=2)
 
         def make_section(title_text):
             sec_frame = tk.Frame(self.edit_inner, bg="#fdf1dc", pady=5)
@@ -1843,14 +1934,7 @@ class StatBlockRenderer(tk.Frame):
             row.pack(fill=tk.X, pady=2)
             item_dict = {"name": name, "frame": row}
             storage_list.append(item_dict)
-            
-            # Pack deletion action trigger button first
-            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), 
-                      command=lambda: (row.pack_forget(), row.destroy(), storage_list.remove(item_dict), 
-                                      self.edit_inner.update_idletasks(), 
-                                      self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
-            
-            # Label expands flexibly up to the button
+            tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), command=lambda: (row.pack_forget(), row.destroy(), storage_list.remove(item_dict), self.edit_inner.update_idletasks(), self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all")))).pack(side=tk.RIGHT)
             tk.Label(row, text=name, font=self.body_bold, bg="#e0cbb0", fg="black", anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
             self.edit_inner.update_idletasks()
             self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
@@ -1870,6 +1954,325 @@ class StatBlockRenderer(tk.Frame):
         self.edit_inner.update_idletasks()
         self.edit_canvas.configure(scrollregion=self.edit_canvas.bbox("all"))
 
+    def _insert_text_with_links_to_widget(self, widget, text, base_tags):
+        base_tags = (base_tags,) if isinstance(base_tags, str) else base_tags
+        pattern = r'(«(?:SPELL|MONSTER|NPC|COMBAT|EVENT|OBJECT|LOCATION|CONDITION):[^»]+»)'
+        tag_map = {
+            "SPELL": "SPELL_TAG", "MONSTER": "LOC_MON_TAG", "NPC": "LOC_NPC_TAG",
+            "COMBAT": "LOC_COMBAT_TAG", "EVENT": "LOC_EVT_TAG", "OBJECT": "LOC_OBJ_TAG",
+            "LOCATION": "LOC_CONN_TAG", "CONDITION": "CONDITION_TAG"
+        }
+        for part in re.split(pattern, text):
+            if part.startswith("«") and part.endswith("»"):
+                content = part[1:-1]
+                if ":" in content:
+                    t_type, t_val = content.split(":", 1)
+                    prefix = tag_map.get(t_type.upper(), "SPELL_TAG")
+                    widget.insert(tk.END, t_val, base_tags + ("spell_link", f"{prefix}:{t_val}"))
+                else:
+                    widget.insert(tk.END, content, base_tags)
+            elif part:
+                widget.insert(tk.END, part, base_tags)
+
+    def _handle_cell_link_hover(self, event, widget):
+        idx = widget.index(f"@{event.x},{event.y}")
+        tags = widget.tag_names(idx)
+        target_tag = None
+        valid_prefixes = ["SPELL_TAG:", "CONDITION_TAG:", "LOC_MON_TAG:", "LOC_NPC_TAG:", "LOC_COMBAT_TAG:", "LOC_EVT_TAG:", "LOC_OBJ_TAG:", "LOC_CONN_TAG:"]
+        for t in tags:
+            if ":" in t and any(t.startswith(p) for p in valid_prefixes):
+                target_tag = t
+                break
+        if not target_tag:
+            self._on_link_leave(None)
+            return
+
+        scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        popup_w, popup_h = int(scr_w * 2 / 5), int(scr_h * 2 / 5)
+        x_pos = event.x_root + 15 if event.x_root < (scr_w / 2) else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < (scr_h / 2) else event.y_root - popup_h - 15
+
+        if hasattr(self, "_hover_target") and self._hover_target == target_tag:
+            if hasattr(self, "_hover_popup") and self._hover_popup:
+                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
+            return
+
+        self._on_link_leave(None)
+        self._hover_target = target_tag
+        prefix, name = target_tag.split(":", 1)
+        
+        popup = tk.Toplevel(self)
+        popup.is_hover_popup = True  
+        popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
+        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
+        self._hover_popup = popup
+
+        if prefix == "CONDITION_TAG":
+            from stat_renderer import CONDITIONS_DB
+            desc = CONDITIONS_DB.get(name.lower().strip(), "No description available.")
+            txt = tk.Text(popup, font=("Times", 12), wrap=tk.WORD, bg="#fdf1dc", bd=0, highlightthickness=0)
+            txt.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+            txt.insert("1.0", name.title(), "title")
+            txt.tag_configure("title", font=("Georgia", 14, "bold"), foreground="#58180d")
+            txt.insert(tk.END, f"\n\n{desc}")
+            txt.config(state=tk.DISABLED)
+            popup.target_text_widget = txt
+        else:
+            toplevel = self.winfo_toplevel()
+            if hasattr(toplevel, "resolve_hover_data"):
+                data, dtype = toplevel.resolve_hover_data(prefix, name)
+                if data:
+                    mini_viewer = StatBlockRenderer(popup)
+                    mini_viewer.pack(fill=tk.BOTH, expand=True)
+                    mini_viewer.clear_overlays()
+                    mini_viewer.text.adjust_height = lambda: None
+                    mini_viewer.text.configure(height=1)
+                    if dtype == "spell": mini_viewer.render_spell(data)
+                    elif dtype in ["monster", "npc"]: mini_viewer.render_monster(data)
+                    elif dtype == "location": mini_viewer.render_location(data)
+                    elif dtype == "event": mini_viewer.render_event(data)
+                    elif dtype == "object": mini_viewer.render_object(data)
+                    popup.target_text_widget = mini_viewer.text
+                else:
+                    tk.Label(popup, text=f"Profile '{name}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+
+    def _on_cell_link_click(self, event, widget):
+        idx = widget.index(f"@{event.x},{event.y}")
+        for t in widget.tag_names(idx):
+            if t.startswith("SPELL_TAG:"):
+                if self.spell_callback: self.spell_callback(t.split(":", 1)[1])
+                break
+            elif t.startswith("CONDITION_TAG:"):
+                self._show_condition_helper(t.split(":", 1)[1])
+                break
+            elif t.startswith("LOC_MON_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Monsters")
+                break
+            elif t.startswith("LOC_NPC_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "NPCs")
+                break
+            elif t.startswith("LOC_COMBAT_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Combats")
+                break
+            elif t.startswith("LOC_EVT_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Events")
+                break
+            elif t.startswith("LOC_OBJ_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Objects")
+                break
+            elif t.startswith("LOC_CONN_TAG:"):
+                if hasattr(self, 'location_link_callback') and self.location_link_callback:
+                    self.location_link_callback(t.split(":", 1)[1], "Locations")
+                break
+
+    def _render_custom_entry_element(self, entry):
+        if not entry:
+            return
+        if isinstance(entry, str):
+            # ADDED NOTE TRANSLATION: Catches note formatting blocks inline safely
+            entry = re.sub(r'{@note (.*?)}', r'\1', entry, flags=re.IGNORECASE)
+            cleaned_str = preprocess.clean_5etools_text(entry)
+            self.insert_text_with_links(cleaned_str + "\n\n", "body")
+            return
+            
+        if isinstance(entry, dict):
+            e_type = entry.get("type")
+            
+            # --- Render Nested Lists ---
+            if e_type == "list":
+                items = entry.get("items", [])
+                cols_count = entry.get("columns", 1)
+                
+                # Expand list elements across multi-column grids if defined
+                if isinstance(cols_count, int) and cols_count > 1:
+                    list_frame = tk.Frame(self.text, bg="#fdf1dc")
+                    for c_idx in range(cols_count):
+                        list_frame.grid_columnconfigure(c_idx, weight=1, uniform="list_col")
+                        
+                    for idx, item in enumerate(items):
+                        row = idx // cols_count
+                        col = idx % cols_count
+                        
+                        raw_txt = str(item.get("entry", item) if isinstance(item, dict) else item)
+                        raw_txt = re.sub(r'{@note (.*?)}', r'\1', raw_txt, flags=re.IGNORECASE)
+                        cleaned_item = preprocess.clean_5etools_text(raw_txt)
+                        
+                        # Pack individual item cell label fields cleanly
+                        cell_lbl = tk.Label(list_frame, text=f"• {cleaned_item}", font=self.body_font, bg="#fdf1dc", fg="black", anchor="w", justify=tk.LEFT, padx=10, pady=2)
+                        cell_lbl.grid(row=row, column=col, sticky="w")
+                        
+                        # If child strings contain inline hyperlink brackets, parse mouse triggers onto them
+                        if "«" in cleaned_item and "»" in cleaned_item:
+                            cell_lbl.config(fg="#4a90e2", cursor="hand2")
+                            # Extract link string parameter tokens
+                            m = re.search(r'«([^:]+):([^»]+)»', cleaned_item)
+                            if m:
+                                t_type, t_val = m.group(1), m.group(2)
+                                cell_lbl.bind("<Button-1>", lambda e, val=t_val: self.spell_callback(val) if self.spell_callback else None)
+                                
+                    self.text.window_create(tk.END, window=list_frame)
+                    self.text.insert(tk.END, "\n\n")
+                else:
+                    # Fallback to default continuous single vertical track layout formatting
+                    for item in items:
+                        if isinstance(item, str):
+                            item = re.sub(r'{@note (.*?)}', r'\1', item, flags=re.IGNORECASE)
+                            self.text.insert(tk.END, "  • ", "body")
+                            self.insert_text_with_links(preprocess.clean_5etools_text(item) + "\n", "body")
+                        elif isinstance(item, dict) and item.get("type") == "item":
+                            self.text.insert(tk.END, "  • ", "body")
+                            name = item.get("name")
+                            if name:
+                                self.insert_text_with_links(preprocess.clean_5etools_text(name) + ": ", "bold")
+                            
+                            sub_entries = item.get("entries", [])
+                            if isinstance(sub_entries, list):
+                                for sub_idx, sub in enumerate(sub_entries):
+                                    cleaned_sub = preprocess.clean_5etools_text(str(sub))
+                                    self.insert_text_with_links(cleaned_sub, "body")
+                                    if sub_idx < len(sub_entries) - 1:
+                                        self.text.insert(tk.END, "\n    ", "body")
+                            else:
+                                self.insert_text_with_links(preprocess.clean_5etools_text(str(sub_entries)), "body")
+                            self.text.insert(tk.END, "\n")
+                    self
+
+            # --- Render Nested Sub-Entries / Inset Structural Content Blocks ---
+            elif e_type in ["entries", "inset"]:
+                name = entry.get("name")
+                if name:
+                    tag_type = "bold" if e_type == "inset" else "section_header"
+                    self.text.insert(tk.END, f"{name}\n", tag_type)
+                    self.insert_divider()
+                
+                sub_entries = entry.get("entries", [])
+                if isinstance(sub_entries, list):
+                    for sub in sub_entries:
+                        self._render_custom_entry_element(sub)
+                else:
+                    self._render_custom_entry_element(str(sub_entries))
+                return
+
+            # --- Render Adaptive Columns Tables Grid ---
+            elif e_type == "table":
+                caption = entry.get("caption")
+                if caption:
+                    self.text.insert(tk.END, f"{caption}\n", "bold")
+                
+                labels = entry.get("colLabels", [])
+                rows = entry.get("rows", [])
+                col_styles = entry.get("colStyles", [])
+                
+                w_width = self.text.winfo_width()
+                text_width = max(200, w_width - 80) if w_width > 20 else 600
+                try:
+                    font_obj = font.Font(font=self.body_font)
+                    char_width = font_obj.measure("m") or 8
+                except:
+                    char_width = 8
+                
+                max_cols = max(len(labels), len(rows[0]) if rows else 0)
+                usable_pixel_width = max(100, text_width - (max_cols * 24))
+                total_char_width = usable_pixel_width // char_width
+                
+                col_weights = []
+                for col_idx in range(max_cols):
+                    weight = 1
+                    if col_idx < len(col_styles):
+                        w_match = re.search(r'col-(\d+)', col_styles[col_idx])
+                        if w_match:
+                            weight = int(w_match.group(1))
+                    col_weights.append(weight)
+                total_weight = sum(col_weights) or 1
+
+                table_frame = tk.Frame(self.text, bg="#d9ad6c", bd=1, relief=tk.SOLID)
+                
+                for col_idx in range(max_cols):
+                    col_pixel_width = int(usable_pixel_width * col_weights[col_idx] // total_weight)
+                    table_frame.grid_columnconfigure(col_idx, minsize=col_pixel_width, weight=col_weights[col_idx])
+                    
+                def cell_scroll_router(event):
+                    if hasattr(self, "_hover_popup") and self._hover_popup and self._hover_popup.winfo_exists():
+                        units = -2 if event.num == 4 else 2 if event.num == 5 else -1 * (event.delta // 40)
+                        if hasattr(self._hover_popup, 'target_text_widget') and self._hover_popup.target_text_widget.winfo_exists():
+                            self._hover_popup.target_text_widget.yview_scroll(units, "units")
+                        return "break"
+                    units = -2 if event.num == 4 else 2 if event.num == 5 else -1 * (event.delta // 40)
+                    self.text.yview_scroll(units, "units")
+                    return "break"
+
+                for col_idx, label in enumerate(labels):
+                    col_pixel_width = int(usable_pixel_width * col_weights[col_idx] // total_weight)
+                    cleaned_lbl = preprocess.clean_5etools_text(str(label))
+                    hdr_lbl = tk.Label(table_frame, text=cleaned_lbl, font=self.body_bold, bg="#e0cbb0", fg="black", 
+                                       padx=10, pady=6, anchor="w", justify=tk.LEFT, wraplength=max(20, col_pixel_width - 20))
+                    hdr_lbl.grid(row=0, column=col_idx, sticky="nsew", padx=1, pady=1)
+                    
+                for row_idx, row in enumerate(rows):
+                    bg_color = "#fdf1dc" if row_idx % 2 == 0 else "#fae6c5"
+                    for col_idx in range(min(len(row), max_cols)):
+                        cell_raw = row[col_idx]
+                        
+                        # UNIFIED PARSING ENGINE: Process dictionary cells vs raw text strings interchangeably
+                        if isinstance(cell_raw, dict) and cell_raw.get("type") == "cell":
+                            # Pull only the item card name entry description text natively
+                            cleaned_cell = preprocess.clean_5etools_text(str(cell_raw.get("entry", "")))
+                        elif isinstance(cell_raw, dict):
+                            cleaned_cell = preprocess.clean_5etools_text(str(cell_raw.get("entry", cell_raw)))
+                        else:
+                            # Direct String evaluation (Captures XDMG columns like "Balance", "Comet" directly)
+                            cleaned_cell = preprocess.clean_5etools_text(str(cell_raw))
+                        
+                        # STRIP DICE INDEX HEADERS AND INDEX RANGES OUT COMPLETELY:
+                        # This strips out range lines like "01-05" or "89-96" and drops em-dashes completely
+                        if re.match(r'^\d+-\d+$', cleaned_cell.strip()) or cleaned_cell.strip() == "—" or cleaned_cell.strip() == "\u2014":
+                            cleaned_cell = "" # Leaves the roll column cell blank as per instructions
+                        
+                        col_pixel_width = int(usable_pixel_width * col_weights[col_idx] // total_weight)
+                        col_char_width = max(4, col_pixel_width // char_width)
+                        
+                        lines_count = cleaned_cell.split("\n")
+                        h_estimate = 0
+                        for line in lines_count:
+                            h_estimate += max(1, (len(line) + col_char_width - 1) // col_char_width)
+                        
+                        cell_txt = tk.Text(table_frame, font=self.body_font, bg=bg_color, fg="black", wrap=tk.WORD, 
+                                           width=1, height=max(1, h_estimate), bd=0, highlightthickness=0, padx=10, pady=6)
+                        cell_txt.grid(row=row_idx + 1, column=col_idx, sticky="nsew", padx=1, pady=1)
+                        
+                        cell_txt.tag_configure("spell_link", font=self.body_font, foreground="#4a90e2", underline=True)
+                        cell_txt.tag_configure("bold", font=self.body_bold, foreground="black")
+                        cell_txt.tag_bind("spell_link", "<Enter>", lambda e, w=cell_txt: [w.config(cursor="hand2"), self._handle_cell_link_hover(e, w)])
+                        cell_txt.tag_bind("spell_link", "<Leave>", lambda e, w=cell_txt: [w.config(cursor=""), self._on_link_leave(e)])
+                        cell_txt.tag_bind("spell_link", "<Motion>", lambda e, w=cell_txt: self._handle_cell_link_hover(e, w))
+                        cell_txt.tag_bind("spell_link", "<Button-1>", lambda e, w=cell_txt: self._on_cell_link_click(e, w))
+                        
+                        self._insert_text_with_links_to_widget(cell_txt, cleaned_cell, "body")
+                        cell_txt.config(state=tk.DISABLED)
+                        
+                        cell_txt.bind("<MouseWheel>", cell_scroll_router)
+                        cell_txt.bind("<Button-4>", cell_scroll_router)
+                        cell_txt.bind("<Button-5>", cell_scroll_router)
+                        
+                self.text.window_create(tk.END, window=table_frame)
+                self.text.insert(tk.END, "\n")
+                
+                footnotes = entry.get("footnotes", [])
+                if footnotes:
+                    self.text.insert(tk.END, "\n", "body")
+                    for fn in footnotes:
+                        cleaned_fn = preprocess.clean_5etools_text(str(fn))
+                        self.text.insert(tk.END, f"{cleaned_fn}\n", "subtitle")
+                
+                self.text.insert(tk.END, "\n")
+                return
+
 class CombatRenderer(tk.Frame):
     def __init__(self, parent, open_statblock_cb, save_cb, add_bestiary_cb, add_camp_mon_cb, add_camp_npc_cb, cancel_cb, *args, **kwargs):
         super().__init__(parent, bg="#fdf1dc", *args, **kwargs)
@@ -1884,6 +2287,7 @@ class CombatRenderer(tk.Frame):
         self.body_font = font.Font(family="Times", size=13)
         self.body_bold = font.Font(family="Times", size=13, weight="bold")
         self.body_italic = font.Font(family="Times", size=13, slant="italic")
+        self.body_link = font.Font(family="Times", size=13, underline=True)
         
         self.main_canvas = tk.Canvas(self, bg="#fdf1dc", highlightthickness=0)
         self.main_scroll = ttk.Scrollbar(self, orient="vertical", command=self.main_canvas.yview)
@@ -1898,13 +2302,8 @@ class CombatRenderer(tk.Frame):
         
         self.participant_rows = []
         self.selected_row_info = None
+        self.edit_mode = False
 
-    def render_combat(self, combat_data, combat_dir):
-        if not hasattr(self, 'original_data') or self.combat_dir != combat_dir:
-            self.original_data = copy.deepcopy(combat_data)
-            self.current_data = copy.deepcopy(combat_data)
-        self.combat_dir = combat_dir
-        self._redraw_workspace()
 
     def _fetch_max_hp(self, target_path):
         p = Path(target_path)
@@ -1918,13 +2317,19 @@ class CombatRenderer(tk.Frame):
         return 10
 
     def _sync_top_metadata(self):
-        if hasattr(self, 'name_txt'):
-            self.current_data["name"] = self.name_txt.get("1.0", "end-1c").strip()
-            self.current_data["location"] = self.loc_txt.get("1.0", "end-1c").strip()
-            self.current_data["time"] = self.time_txt.get("1.0", "end-1c").strip()
-            self.current_data["description"] = self.desc_txt.get("1.0", "end-1c").strip()
-            self.current_data["over"] = self.over_var.get()
-            self.current_data["outcome"] = self.out_txt.get("1.0", "end-1c").strip()
+        if getattr(self, 'edit_mode', False):
+            if hasattr(self, 'name_txt'):
+                self.current_data["name"] = self.name_txt.get("1.0", "end-1c").strip()
+            if hasattr(self, 'time_txt'):
+                self.current_data["time"] = self.time_txt.get("1.0", "end-1c").strip()
+            if hasattr(self, 'desc_txt'):
+                self.current_data["description"] = self.desc_txt.get("1.0", "end-1c").strip()
+            if hasattr(self, 'over_var'):
+                self.current_data["over"] = "Yes" if self.over_var.get() else "No"
+            if hasattr(self, 'out_txt'):
+                self.current_data["outcome"] = self.out_txt.get("1.0", "end-1c").strip()
+            if hasattr(self, 'combat_location_items'):
+                self.current_data["locations"] = [l["name"] for l in self.combat_location_items]
 
     def _sync_all_rows(self):
         self._sync_top_metadata()
@@ -1944,20 +2349,24 @@ class CombatRenderer(tk.Frame):
             
             p["damage"] = max_hp - curr_hp
 
-    def _realtime_sort(self, event=None):
-        try: focused_widget = self.focus_get()
-        except: focused_widget = None
-            
+    def render_combat(self, combat_data, combat_dir):
+        # Fix: Always refresh current view data when switching back to display mode to clear stale states
+        if not hasattr(self, 'original_data') or self.combat_dir != combat_dir or not self.edit_mode:
+            self.original_data = copy.deepcopy(combat_data)
+            self.current_data = copy.deepcopy(combat_data)
+        self.combat_dir = combat_dir
+        self._redraw_workspace()
+
+    def _auto_save(self):
+        """Saves current interactive workspace properties down to disk automatically."""
         self._sync_all_rows()
-        self.participant_rows.sort(key=lambda r: r["data"].get("init", 0), reverse=True)
-        self.current_data["participants"] = [r["data"] for r in self.participant_rows]
-        
-        for r in self.participant_rows: r["frame"].pack_forget()
-        for r in self.participant_rows: r["frame"].pack(fill=tk.X, pady=4)
-            
-        if focused_widget and focused_widget.winfo_exists():
-            try: focused_widget.focus_set()
-            except: pass
+        self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
+        if not self.edit_mode:
+            self.original_data = copy.deepcopy(self.current_data)
+        try:
+            self.save_cb(self.combat_dir, self.current_data, background=True)
+        except TypeError:
+            self.save_cb(self.combat_dir, self.current_data)
 
     def _modify_selected_hp(self, delta):
         if not self.selected_row_info:
@@ -1977,8 +2386,87 @@ class CombatRenderer(tk.Frame):
             
             if "update_colors_cb" in self.selected_row_info:
                 self.selected_row_info["update_colors_cb"]()
-            self._sync_all_rows()
+            self._auto_save() # Auto-save HP changes
         except Exception: pass
+
+    def _realtime_sort(self, event=None):
+        try: focused_widget = self.focus_get()
+        except: focused_widget = None
+            
+        self._sync_all_rows()
+        self.participant_rows.sort(key=lambda r: r["data"].get("init", 0), reverse=True)
+        self.current_data["participants"] = [r["data"] for r in self.participant_rows]
+        
+        for r in self.participant_rows: r["frame"].pack_forget()
+        for r in self.participant_rows: r["frame"].pack(fill=tk.X, pady=4)
+            
+        if focused_widget and focused_widget.winfo_exists():
+            try: focused_widget.focus_set()
+            except: pass
+        self._auto_save() # Auto-save adjustments to initiative orders or alignment side states
+
+    def _open_status_dialog(self, row_info):
+        from stat_renderer import CONDITIONS_DB
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Statuses: {row_info['name_var'].get()}")
+        dialog.geometry("380x460")
+        dialog.configure(bg="#fdf1dc")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="Select Status Effects", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack(side=tk.TOP)
+        current_active = set(s.lower().strip() for s in row_info.get("active_statuses", []))
+        selected_conds = set(current_active)
+
+        def apply_selection():
+            row_info["active_statuses"] = [c.title() for c in sorted(list(CONDITIONS_DB.keys())) if c in selected_conds]
+            self._refresh_status_chips_display(row_info)
+            self._auto_save() # Auto-save applied status effects
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg="#fdf1dc", pady=10)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
+        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=dialog.destroy).pack(side=tk.RIGHT, padx=35)
+
+        list_frame = tk.Frame(dialog, bg="#fdf1dc")
+        list_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(list_frame, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=canvas.yview)
+
+        scroll_inner = tk.Frame(canvas, bg="#fae6c5")
+        window_item = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
+        
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_item, width=e.width))
+        scroll_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        dialog.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
+        def toggle_row(cond_key, row_frame, lbl_widget, base_bg):
+            if cond_key in selected_conds:
+                selected_conds.remove(cond_key)
+                row_frame.configure(bg=base_bg)
+                lbl_widget.configure(bg=base_bg, fg="black")
+            else:
+                selected_conds.add(cond_key)
+                row_frame.configure(bg="#4a90e2")
+                lbl_widget.configure(bg="#4a90e2", fg="white")
+
+        for idx, cond in enumerate(sorted(list(CONDITIONS_DB.keys()))):
+            base_bg = "#f5f5f5" if idx % 2 == 0 else "#e0e0e0"
+            r_frame = tk.Frame(scroll_inner, bg=base_bg, bd=0, padx=15, pady=6)
+            r_frame.pack(fill=tk.X, expand=True)
+            lbl_widget = tk.Label(r_frame, text=cond.title(), font=("Times", 11, "bold"), bg=base_bg, fg="black", anchor="w")
+            lbl_widget.pack(fill=tk.X, expand=True)
+            if cond in selected_conds:
+                r_frame.configure(bg="#4a90e2")
+                lbl_widget.configure(bg="#4a90e2", fg="white")
+            r_frame.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
+            lbl_widget.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
 
     def _change_selected_state(self, state_type):
         if not self.selected_row_info:
@@ -2045,41 +2533,126 @@ class CombatRenderer(tk.Frame):
             self._sync_all_rows()
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
             self.original_data = copy.deepcopy(self.current_data)
+            # Triggers non-background open_page navigation flow back into clean view mode
             self.save_cb(self.combat_dir, self.current_data)
+
+        def cancel_action():
+            self.current_data = copy.deepcopy(self.original_data)
+            self.edit_mode = False
             self._redraw_workspace()
 
-        tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=save_action).pack(side=tk.RIGHT, padx=5)
-        tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=self.cancel_cb).pack(side=tk.RIGHT, padx=5)
+        def edit_action():
+            self.edit_mode = True
+            self._redraw_workspace()
+
+        if self.edit_mode:
+            tk.Button(top_frame, text="SAVE", bg="#4a90e2", fg="white", font=("Georgia", 10, "bold"), command=save_action).pack(side=tk.RIGHT, padx=5)
+            tk.Button(top_frame, text="CANCEL", bg="#58180d", fg="white", font=("Georgia", 10, "bold"), command=cancel_action).pack(side=tk.RIGHT, padx=5)
+        else:
+            tk.Button(top_frame, text="EDIT", bg="#8a8a8a", fg="white", font=("Georgia", 10, "bold"), command=edit_action).pack(side=tk.RIGHT, padx=5)
 
         fields_f = tk.Frame(self.main_inner, bg="#fdf1dc")
         fields_f.pack(fill=tk.X, pady=10)
         fields_f.grid_columnconfigure(1, weight=1)
 
-        for r, (lbl, key, w) in enumerate([("Name:", "name", 40), ("Location:", "location", 40), ("Time:", "time", 40), ("Description:", "description", 60)]):
-            tk.Label(fields_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="ne", pady=4)
-            txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=w, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-            txt.insert("1.0", self.current_data.get(key, ""))
-            txt.grid(row=r, column=1, sticky="w", padx=10, pady=4)
-            if key == "name": self.name_txt = txt
-            elif key == "location": self.loc_txt = txt
-            elif key == "time": self.time_txt = txt
-            elif key == "description": self.desc_txt = txt
+        if self.edit_mode:
+            # Edit Mode Input Fields (Rows 0 to 4)
+            for r, (lbl, key, w) in enumerate([("Name:", "name", 40), ("Time:", "time", 40), ("Description:", "description", 60)]):
+                tk.Label(fields_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="ne", pady=4)
+                txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=w, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+                txt.insert("1.0", self.current_data.get(key, ""))
+                txt.grid(row=r, column=1, sticky="w", padx=10, pady=4)
+                if key == "name": self.name_txt = txt
+                elif key == "time": self.time_txt = txt
+                elif key == "description": self.desc_txt = txt
 
-        tk.Label(fields_f, text="Over:", bg="#fdf1dc", font=self.body_bold).grid(row=4, column=0, sticky="ne", pady=4)
-        self.over_var = tk.StringVar(value=self.current_data.get("over", "No"))
-        ttk.Combobox(fields_f, textvariable=self.over_var, values=["Yes", "No"], state="readonly", width=10).grid(row=4, column=1, sticky="w", padx=10, pady=4)
+            tk.Label(fields_f, text="Over:", bg="#fdf1dc", font=self.body_bold).grid(row=3, column=0, sticky="ne", pady=4)
+            self.over_var = tk.BooleanVar(value=self.current_data.get("over", "No") == "Yes")
+            tk.Checkbutton(fields_f, variable=self.over_var, bg="#fdf1dc", activebackground="#fdf1dc").grid(row=3, column=1, sticky="w", padx=10, pady=4)
 
-        tk.Label(fields_f, text="Outcome:", bg="#fdf1dc", font=self.body_bold).grid(row=5, column=0, sticky="ne", pady=4)
-        self.out_txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=60, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
-        self.out_txt.insert("1.0", self.current_data.get("outcome", ""))
-        self.out_txt.grid(row=5, column=1, sticky="w", padx=10, pady=4)
+            tk.Label(fields_f, text="Outcome:", bg="#fdf1dc", font=self.body_bold).grid(row=4, column=0, sticky="ne", pady=4)
+            self.out_txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=60, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
+            self.out_txt.insert("1.0", self.current_data.get("outcome", ""))
+            self.out_txt.grid(row=4, column=1, sticky="w", padx=10, pady=4)
+            
+            
+            tk.Label(fields_f, text="Locations:", bg="#fdf1dc", font=self.body_bold).grid(row=5, column=0, sticky="ne", pady=4)
+            loc_sec_frame = tk.Frame(fields_f, bg="#fdf1dc")
+            # Changed from sticky="w" to sticky="ew" to take up full available frame width
+            loc_sec_frame.grid(row=5, column=1, sticky="ew", padx=10, pady=4)
+            
+            self.combat_location_items = []
+            loc_lst = tk.Frame(loc_sec_frame, bg="#fdf1dc")
+            
+            def draw_loc_row(name):
+                loc_name = name.get("name") if isinstance(name, dict) else str(name)
+                row = tk.Frame(loc_lst, bg="#e0cbb0", pady=4, padx=10, bd=1, relief=tk.SOLID)
+                # Enforce horizontal filling across full panel space
+                row.pack(fill=tk.X, expand=True, pady=2)
+                tk.Label(row, text=loc_name, font=self.body_bold, bg="#e0cbb0", fg="black").pack(side=tk.LEFT)
+                item_dict = {"name": name, "frame": row}
+                self.combat_location_items.append(item_dict)
+                tk.Button(row, text="X", bg="#ff4d4d", fg="white", font=("Arial", 8, "bold"), 
+                          command=lambda: (row.pack_forget(), row.destroy(), self.combat_location_items.remove(item_dict), self.main_inner.update_idletasks(), self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")))).pack(side=tk.RIGHT)
+                loc_lst.pack(fill=tk.X, expand=True)
+                self.main_inner.update_idletasks()
+                self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
 
+            toplevel = self.winfo_toplevel()
+            map_dir = getattr(toplevel, "map_dir", None)
+            
+            def add_location_action():
+                from dialogs import EntitySelectionDialog
+                from main import SyncRef
+                EntitySelectionDialog(toplevel, map_dir, "Locations", lambda name: draw_loc_row(SyncRef(name, str(toplevel._find_dir_by_name(name, map_dir)))))
+
+            tk.Button(loc_sec_frame, text="+ Add Location", bg="#d9ad6c", font=("Arial", 8, "bold"), 
+                      command=add_location_action).pack(side=tk.TOP, anchor="w")
+            loc_lst.pack(fill=tk.X, expand=True, pady=4)
+            for loc in self.current_data.get("locations", []): 
+                draw_loc_row(loc)
+        else:
+            # Display Mode Dashboard Read-Only Text Labels
+            for r, (lbl, key) in enumerate([("Name:", "name"), ("Time:", "time"), ("Description:", "description"), ("Over:", "over"), ("Outcome:", "outcome")]):
+                tk.Label(fields_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="nw", pady=2)
+                val_text = str(self.current_data.get(key, ""))
+                tk.Label(fields_f, text=val_text, bg="#fdf1dc", font=self.body_font, fg="black", justify=tk.LEFT, anchor="w", wraplength=600).grid(row=r, column=1, sticky="w", padx=10, pady=2)
+
+            # --- Location Row Hyperlink Formatting under Display Mode (Separate Bulleted Rows) ---
+            tk.Label(fields_f, text="Locations:", bg="#fdf1dc", font=self.body_bold).grid(row=5, column=0, sticky="nw", pady=2)
+            locs_frame = tk.Frame(fields_f, bg="#fdf1dc")
+            locs_frame.grid(row=5, column=1, sticky="ew", padx=10, pady=2)
+            
+            locs_list = self.current_data.get("locations", [])
+            if not locs_list:
+                tk.Label(locs_frame, text="None", bg="#fdf1dc", font=self.body_italic, fg="black").pack(anchor="w")
+            else:
+                for loc in locs_list:
+                    # Render each element on its own individual horizontal layout row line
+                    row_f = tk.Frame(locs_frame, bg="#fdf1dc")
+                    row_f.pack(fill=tk.X, anchor="w", pady=1)
+                    
+                    # Prepend standard entity bullet point character matching render_campaign_node architecture
+                    tk.Label(row_f, text="• ", bg="#fdf1dc", font=self.body_bold, fg="black").pack(side=tk.LEFT)
+                    
+                    loc_name = loc.get("name") if isinstance(loc, dict) else str(loc)
+                    loc_target = loc.get("path") if isinstance(loc, dict) else (getattr(loc, "path", None) or loc_name)
+                    
+                    lbl_link = tk.Label(row_f, text=loc_name, bg="#fdf1dc", fg="#4a90e2", font=self.body_link, cursor="hand2")
+                    lbl_link.pack(side=tk.LEFT)
+                    
+                    # Bind navigation and minirenderer hover tooltips onto individual items cleanly
+                    lbl_link.bind("<Button-1>", lambda e, path=loc_target: getattr(self.winfo_toplevel(), "on_location_link_clicked")(path, "Locations"))
+                    lbl_link.bind("<Enter>", lambda e, lt=loc_target: self._on_location_hover_enter(e, lt))
+                    lbl_link.bind("<Motion>", lambda e, lt=loc_target: self._on_location_hover_motion(e, lt))
+                    lbl_link.bind("<Leave>", self._on_location_hover_leave)
+
+        # The combat tracker section below remains fully interactive in both modes
         tk.Label(self.main_inner, text="COMBATANTS", font=self.header_font, fg="#58180d", bg="#fdf1dc").pack(anchor="w", pady=(20, 5))
-        
-        # Row 1 Controls: Add Operations
         controls_row1 = tk.Frame(self.main_inner, bg="#fdf1dc")
         controls_row1.pack(fill=tk.X, pady=2)
 
+        # --- COMBATANTS LIST SECTION CONTROLS ---
         def append_combatant(target_path, folder_type):
             self._sync_all_rows()
             p_obj = Path(target_path)
@@ -2091,35 +2664,32 @@ class CombatRenderer(tk.Frame):
             }
             self.current_data.setdefault("participants", []).append(new_fighter)
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
+            self._auto_save() # Auto-save added combatants
             self._redraw_workspace()
+
 
         tk.Button(controls_row1, text="+ New Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_bestiary_cb(self.combat_dir, append_combatant)).pack(side=tk.LEFT, padx=3)
         tk.Button(controls_row1, text="+ Add Existing Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_mon_cb(append_combatant)).pack(side=tk.LEFT, padx=3)
         tk.Button(controls_row1, text="+ Add NPC", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_npc_cb(append_combatant)).pack(side=tk.LEFT, padx=3)
 
-        # Row 2 Controls: Execution Matrix Panel Block
         controls_row2 = tk.Frame(self.main_inner, bg="#fdf1dc", pady=5)
         controls_row2.pack(fill=tk.X, pady=(2, 10))
 
-        # 1. Initiative Selector Segment
         tk.Label(controls_row2, text="Initiative:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(3, 2))
         init_vals = [str(i) for i in range(-5, 31)]
         self.top_init_combo = ttk.Combobox(controls_row2, values=init_vals, state="readonly", width=5)
         self.top_init_combo.pack(side=tk.LEFT, padx=2)
         self.top_init_combo.bind("<<ComboboxSelected>>", self._on_top_init_changed)
 
-        # 2. Status Selector Button
         self.top_status_btn = tk.Button(controls_row2, text="STATUSES", bg="#fae6c5", fg="black", font=("Arial", 9, "bold"), command=lambda: self._open_status_dialog(self.selected_row_info) if self.selected_row_info else messagebox.showinfo("Selection Required", "Please select a combatant row first."))
         self.top_status_btn.pack(side=tk.LEFT, padx=15)
 
-        # 3. Quick HP Adjustment Modifiers
         tk.Label(controls_row2, text="Quick HP:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(5, 2))
         for mod in [1, 5, 10]:
             tk.Button(controls_row2, text=f"+{mod}", bg="#5cb85c", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(m)).pack(side=tk.LEFT, padx=1)
         for mod in [1, 5, 10]:
             tk.Button(controls_row2, text=f"-{mod}", bg="#d9534f", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(-m)).pack(side=tk.LEFT, padx=1)
 
-        # 4. Side / State Assignment Selection Subpanel
         tk.Label(controls_row2, text="Set State:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(15, 2))
         tk.Button(controls_row2, text="Ally", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Ally")).pack(side=tk.LEFT, padx=1)
         tk.Button(controls_row2, text="Neutral", bg="#8a8a8a", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Neutral")).pack(side=tk.LEFT, padx=1)
@@ -2135,115 +2705,32 @@ class CombatRenderer(tk.Frame):
     def _modify_hp_via_top(self, delta):
         self._modify_selected_hp(delta)
 
-    def _open_status_dialog(self, row_info):
-        from stat_renderer import CONDITIONS_DB
-        dialog = tk.Toplevel(self)
-        dialog.title(f"Statuses: {row_info['name_var'].get()}")
-        dialog.geometry("380x460")
-        dialog.configure(bg="#fdf1dc")
-        dialog.transient(self)
-        dialog.grab_set()
-
-        # 1. Header Title Component
-        tk.Label(dialog, text="Select Status Effects", font=("Georgia", 13, "bold"), fg="#58180d", bg="#fdf1dc", pady=8).pack(side=tk.TOP)
-
-        # Track state metrics locally within the frame context
-        current_active = set(s.lower().strip() for s in row_info.get("active_statuses", []))
-        selected_conds = set(current_active)
-
-        def apply_selection():
-            row_info["active_statuses"] = [c.title() for c in sorted(list(CONDITIONS_DB.keys())) if c in selected_conds]
-            self._refresh_status_chips_display(row_info)
-            self._sync_all_rows()
-            dialog.destroy()
-
-        # 2. FIXED: Pack Action Buttons Row to the BOTTOM first to secure its layout boundaries
-        btn_frame = tk.Frame(dialog, bg="#fdf1dc", pady=10)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        tk.Button(btn_frame, text="Apply", font=("Arial", 10, "bold"), bg="#4a90e2", fg="white", width=10, command=apply_selection).pack(side=tk.LEFT, padx=35)
-        tk.Button(btn_frame, text="Cancel", font=("Arial", 10, "bold"), bg="#58180d", fg="white", width=10, command=dialog.destroy).pack(side=tk.RIGHT, padx=35)
-
-        # 3. FIXED: List Frame handles expanding space cleanly between top title and bottom buttons
-        list_frame = tk.Frame(dialog, bg="#fdf1dc")
-        list_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=15, pady=5)
-
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas = tk.Canvas(list_frame, bg="#fae6c5", highlightthickness=1, highlightbackground="#d9ad6c")
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=canvas.yview)
-
-        scroll_inner = tk.Frame(canvas, bg="#fae6c5")
-        window_item = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
-        
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_item, width=e.width))
-        scroll_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-        # Scroll focus listeners
-        dialog.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
-
-        def toggle_row(cond_key, row_frame, lbl_widget, base_bg):
-            if cond_key in selected_conds:
-                selected_conds.remove(cond_key)
-                row_frame.configure(bg=base_bg)
-                lbl_widget.configure(bg=base_bg, fg="black")
-            else:
-                selected_conds.add(cond_key)
-                row_frame.configure(bg="#4a90e2")
-                lbl_widget.configure(bg="#4a90e2", fg="white")
-
-        # Populate conditions from the static data tracking database
-        for idx, cond in enumerate(sorted(list(CONDITIONS_DB.keys()))):
-            base_bg = "#f5f5f5" if idx % 2 == 0 else "#e0e0e0"
-            
-            r_frame = tk.Frame(scroll_inner, bg=base_bg, bd=0, padx=15, pady=6)
-            r_frame.pack(fill=tk.X, expand=True)
-            
-            lbl_widget = tk.Label(r_frame, text=cond.title(), font=("Times", 11, "bold"), bg=base_bg, fg="black", anchor="w")
-            lbl_widget.pack(fill=tk.X, expand=True)
-            
-            if cond in selected_conds:
-                r_frame.configure(bg="#4a90e2")
-                lbl_widget.configure(bg="#4a90e2", fg="white")
-                
-            r_frame.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
-            lbl_widget.bind("<Button-1>", lambda e, c=cond, rf=r_frame, lw=lbl_widget, bbg=base_bg: toggle_row(c, rf, lw, bbg))
 
     def _refresh_status_chips_display(self, row_info):
         sb = row_info["status_box"]
         sb.config(state=tk.NORMAL)
         sb.delete("1.0", tk.END)
-        
         active_list = row_info.get("active_statuses", [])
         if not active_list:
             sb.adjust_height()
             sb.config(state=tk.DISABLED)
             return
-
         for i, cond_name in enumerate(active_list):
-            if i > 0:
-                sb.insert(tk.END, ", ", "normal_text")
+            if i > 0: sb.insert(tk.END, ", ", "normal_text")
             tag_name = f"STATUS_LINK:{cond_name}"
             sb.insert(tk.END, cond_name, (tag_name, "status_link"))
             sb.tag_configure(tag_name, foreground="#ffffff", underline=True, font=("Times", 13, "bold"))
-            
         sb.adjust_height()
         sb.config(state=tk.DISABLED)
 
     def _select_combatant_row(self, row_info):
         if self.selected_row_info and self.selected_row_info["frame"].winfo_exists():
             self.selected_row_info["frame"].configure(highlightthickness=2, highlightbackground="black", highlightcolor="black")
-        
         self.selected_row_info = row_info
         row_info["frame"].configure(highlightthickness=2, highlightbackground="yellow", highlightcolor="yellow")
-        
-        # Safely align top combobox tracking index metrics
         curr_init = str(row_info["init_en"].get().strip())
-        if curr_init in [str(i) for i in range(-5, 31)]:
-            self.top_init_combo.set(curr_init)
-        else:
-            self.top_init_combo.set("0")
+        if curr_init in [str(i) for i in range(-5, 31)]: self.top_init_combo.set(curr_init)
+        else: self.top_init_combo.set("0")
 
     def _build_live_participant_panel(self, p):
         def get_panel_color(side, is_dead):
@@ -2251,33 +2738,26 @@ class CombatRenderer(tk.Frame):
             return {"Ally": "#4a90e2", "Enemy": "#ff4d4d", "Neutral": "#8a8a8a"}.get(side, "#8a8a8a")
 
         initial_color = get_panel_color(p.get("side", "Neutral"), p.get("dead", False))
-        
-        # Consistent layout frame container
         panel = tk.Frame(self.parts_frame, bg=initial_color, pady=8, padx=12, bd=1, relief=tk.SOLID, highlightthickness=2, highlightbackground="black", highlightcolor="black")
         panel.pack(fill=tk.X, pady=4)
 
         init_hidden_entry = tk.Entry(self) 
         init_hidden_entry.insert(0, str(p.get("init", 0)))
-        
         d_var = tk.BooleanVar(value=p.get("dead", False))
         s_var = tk.StringVar(value=p.get("side", "Neutral"))
         row_info = {"data": p, "frame": panel, "active_statuses": p.get("statuses", []), "init_en": init_hidden_entry, "dead_var": d_var, "side_var": s_var}
-        
         panel.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
 
-        # 1. DELETE Button (Packed to the far right)
         def delete_combatant():
             self._sync_all_rows()
-            if self.selected_row_info == row_info:
-                self.selected_row_info = None
+            if self.selected_row_info == row_info: self.selected_row_info = None
             self.current_data["participants"].remove(p)
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
+            self._auto_save() # Auto-save row removals
             self._redraw_workspace()
 
-        btn_delete = tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant)
-        btn_delete.pack(side=tk.RIGHT, padx=5)
+        tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant).pack(side=tk.RIGHT, padx=5)
 
-        # 2. HP Container Panel (Packed next to the delete button on the right)
         hp_container = tk.Frame(panel, bg=initial_color, width=110)
         hp_container.pack_propagate(False)
         hp_container.pack(side=tk.RIGHT, padx=10, fill=tk.Y)
@@ -2298,21 +2778,17 @@ class CombatRenderer(tk.Frame):
         lbl_hp.pack(side=tk.RIGHT, padx=1)
         lbl_hp.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
 
-        # 3. Name Field (Packed to the far left)
         name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=25, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
         name_en.insert(0, p["name"])
         name_en.pack(side=tk.LEFT, padx=5)
         name_en.bind("<Button-1>", lambda e: [self._select_combatant_row(row_info), "continue"][1])
 
-        # 4. STATS Trigger Button (Packed next to the name on the left)
         btn_stats = tk.Button(panel, text="STATS", bg="#fae6c5", fg="black", font=("Arial", 8, "bold"), width=6, command=lambda: (self._sync_all_rows(), self.open_statblock_cb(p["target"], p["type"])))
         btn_stats.pack(side=tk.LEFT, padx=5)
-        
         btn_stats.bind("<Enter>", lambda e, pd=p: self._on_stats_btn_hover_enter(e, pd))
         btn_stats.bind("<Leave>", lambda e: self._on_stats_btn_hover_leave(e))
         btn_stats.bind("<Motion>", lambda e: self._on_stats_btn_hover_motion(e))
 
-        # 5. Condition Link Zone (Expands to fill all remaining horizontal center space)
         status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=15, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD)
         status_box.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
         row_info["status_box"] = status_box
@@ -2321,26 +2797,13 @@ class CombatRenderer(tk.Frame):
             try:
                 text_content = status_box.get("1.0", "end-1c")
                 if not text_content.strip():
-                    status_box.configure(height=1)
-                    return
-
-                # Calculate characters per line dynamically using real screen pixels
+                    status_box.configure(height=1); return
                 pixel_width = status_box.winfo_width()
-                if pixel_width > 50:
-                    # Times 13 Bold characters average roughly 8 pixels wide
-                    chars_per_line = max(10, pixel_width // 12)
-                else:
-                    # Adaptive baseline fallback before the widget maps to the screen
-                    # Lowered from 32 to 22 because the Name field expanded to 25
-                    chars_per_line = 22  
-
+                chars_per_line = max(10, pixel_width // 12) if pixel_width > 50 else 22  
                 total_lines = 0
                 for line in text_content.split("\n"):
-                    if not line:
-                        total_lines += 1
-                    else:
-                        total_lines += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
-                
+                    if not line: total_lines += 1
+                    else: total_lines += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
                 total_lines = max(1, total_lines)
                 if total_lines != int(status_box.cget("height")):
                     status_box.configure(height=total_lines)
@@ -2356,16 +2819,12 @@ class CombatRenderer(tk.Frame):
             idx = status_box.index(f"@{event.x},{event.y}")
             for tag in status_box.tag_names(idx):
                 if tag.startswith("STATUS_LINK:"):
-                    c_name = tag.split(":", 1)[1]
-                    self._show_condition_helper(c_name)
-                    return "break"
+                    self._show_condition_helper(tag.split(":", 1)[1]); return "break"
         status_box.bind("<Button-1>", handle_status_box_interaction)
-
         status_box.tag_bind("status_link", "<Enter>", lambda e, sb=status_box: self._handle_status_hover(e, sb))
         status_box.tag_bind("status_link", "<Leave>", lambda e: self._on_status_hover_leave(e))
         status_box.tag_bind("status_link", "<Motion>", lambda e, sb=status_box: self._handle_status_hover(e, sb))
 
-        # Dynamic UI recoloring handler
         def update_colors():
             new_color = get_panel_color(s_var.get(), d_var.get())
             panel.configure(bg=new_color)
@@ -2373,125 +2832,102 @@ class CombatRenderer(tk.Frame):
             hp_container.configure(bg=new_color)
             lbl_max.configure(bg=new_color)
             lbl_hp.configure(bg=new_color)
-            
-            if self.selected_row_info == row_info:
-                panel.configure(highlightbackground="yellow", highlightcolor="yellow")
-            else:
-                panel.configure(highlightbackground="black", highlightcolor="black")
-                
+            if self.selected_row_info == row_info: panel.configure(highlightbackground="yellow", highlightcolor="yellow")
+            else: panel.configure(highlightbackground="black", highlightcolor="black")
             self._refresh_status_chips_display(row_info)
             for child in panel.winfo_children():
-                if isinstance(child, tk.Label):
-                    child.configure(bg=new_color, activebackground=new_color)
+                if isinstance(child, tk.Label): child.configure(bg=new_color, activebackground=new_color)
 
-        row_info.update({
-            "name_var": name_en, "hp_en": hp_en, "lbl_hp": lbl_hp, "lbl_max": lbl_max,
-            "update_colors_cb": update_colors
-        })
-        
+        row_info.update({"name_var": name_en, "hp_en": hp_en, "lbl_hp": lbl_hp, "lbl_max": lbl_max, "update_colors_cb": update_colors})
         self.participant_rows.append(row_info)
         update_colors()
-
-    def _on_status_hover_enter(self, event, sb):
-        self._handle_status_hover(event, sb)
-
-    def _on_status_hover_motion(self, event, sb):
-        self._handle_status_hover(event, sb)
 
     def _on_status_hover_leave(self, event):
         if hasattr(self, "_hover_popup") and self._hover_popup:
             try: self._hover_popup.destroy()
             except: pass
-            self._hover_popup = None
-            self._hover_target = None
+            self._hover_popup, self._hover_target = None, None
 
     def _handle_status_hover(self, event, sb):
-        idx = sb.index(f"@{event.x},{event.y}")
-        tags = sb.tag_names(idx)
-        target_tag = None
-        for t in tags:
-            if t.startswith("STATUS_LINK:"):
-                target_tag = t
-                break
-        if not target_tag:
-            self._on_status_hover_leave(None)
-            return
-
-        scr_w = self.winfo_screenwidth()
-        scr_h = self.winfo_screenheight()
-        popup_w = int(scr_w * 2 / 5)
-        popup_h = int(scr_h * 2 / 5)
-
-        mid_x = scr_w / 2
-        mid_y = scr_h / 2
-        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
-        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
-
+        idx = sb.index(f"@{event.x},{event.y}"); tags = sb.tag_names(idx); target_tag = next((t for t in tags if t.startswith("STATUS_LINK:")), None)
+        if not target_tag: self._on_status_hover_leave(None); return
+        scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        popup_w, popup_h = int(scr_w * 2 / 5), int(scr_h * 2 / 5)
+        x_pos = event.x_root + 15 if event.x_root < (scr_w / 2) else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < (scr_h / 2) else event.y_root - popup_h - 15
         if hasattr(self, "_hover_target") and self._hover_target == target_tag:
-            if hasattr(self, "_hover_popup") and self._hover_popup:
-                self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
+            if hasattr(self, "_hover_popup") and self._hover_popup: self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
-
-        self._on_status_hover_leave(None)
-        self._hover_target = target_tag
-        cond_name = target_tag.split(":", 1)[1]
-        
-        popup = tk.Toplevel(self)
-        popup.is_hover_popup = True  
-        popup.wm_overrideredirect(True)
-        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
-        popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
-        self._hover_popup = popup
-
+        self._on_status_hover_leave(None); self._hover_target = target_tag; cond_name = target_tag.split(":", 1)[1]
+        popup = tk.Toplevel(self); popup.is_hover_popup = True; popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID); popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}"); self._hover_popup = popup
         from stat_renderer import CONDITIONS_DB
         desc = CONDITIONS_DB.get(cond_name.lower().strip(), "No description available.")
         txt = tk.Text(popup, font=("Times", 12), wrap=tk.WORD, bg="#fdf1dc", bd=0, highlightthickness=0)
         txt.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         txt.insert("1.0", cond_name.title(), "title")
         txt.tag_configure("title", font=("Georgia", 13, "bold"), foreground="#58180d")
-        txt.insert(tk.END, f"\n\n{desc}")
-        txt.config(state=tk.DISABLED)
-        popup.target_text_widget = txt
+        txt.insert(tk.END, f"\n\n{desc}"); txt.config(state=tk.DISABLED); popup.target_text_widget = txt
 
-    def _on_stats_btn_hover_enter(self, event, p_data):
-        self._handle_stats_btn_hover(event, p_data)
-
+    def _on_stats_btn_hover_enter(self, event, p_data): self._handle_stats_btn_hover(event, p_data)
     def _on_stats_btn_hover_motion(self, event):
-        if hasattr(self, "_stats_hover_data"):
-            self._handle_stats_btn_hover(event, self._stats_hover_data)
-
+        if hasattr(self, "_stats_hover_data"): self._handle_stats_btn_hover(event, self._stats_hover_data)
     def _on_stats_btn_hover_leave(self, event):
         if hasattr(self, "_hover_popup") and self._hover_popup:
             try: self._hover_popup.destroy()
             except: pass
-            self._hover_popup = None
-            self._hover_target = None
-        if hasattr(self, "_stats_hover_data"):
-            delattr(self, "_stats_hover_data")
+            self._hover_popup, self._hover_target = None, None
+        if hasattr(self, "_stats_hover_data"): delattr(self, "_stats_hover_data")
 
     def _handle_stats_btn_hover(self, event, p_data):
-        self._stats_hover_data = p_data
-        target_tag = f"STATS_BTN:{p_data['target']}:{p_data['type']}"
+        self._stats_hover_data = p_data; target_tag = f"STATS_BTN:{p_data['target']}:{p_data['type']}"
+        scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        popup_w, popup_h = int(scr_w * 2 / 5), int(scr_h * 2 / 5)
+        x_pos = event.x_root + 15 if event.x_root < (scr_w / 2) else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < (scr_h / 2) else event.y_root - popup_h - 15
+        if hasattr(self, "_hover_target") and self._hover_target == target_tag:
+            if hasattr(self, "_hover_popup") and self._hover_popup: self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
+            return
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+        self._hover_target = target_tag; popup = tk.Toplevel(self); popup.is_hover_popup = True; popup.wm_overrideredirect(True)
+        popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID); popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}"); self._hover_popup = popup
+        prefix = "LOC_MON_TAG" if p_data['type'] == "Monsters" else "LOC_NPC_TAG"
+        name = p_data['target']; toplevel = self.winfo_toplevel()
+        if hasattr(toplevel, "resolve_hover_data"):
+            data, dtype = toplevel.resolve_hover_data(prefix, name)
+            if data:
+                mini_viewer = StatBlockRenderer(popup); mini_viewer.pack(fill=tk.BOTH, expand=True); mini_viewer.clear_overlays()
+                mini_viewer.text.adjust_height = lambda: None; mini_viewer.text.configure(height=1); mini_viewer.render_monster(data); popup.target_text_widget = mini_viewer.text
+            else: tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+
+    def _on_location_hover_enter(self, event, loc_target):
+        self._handle_location_hover(event, loc_target)
+
+    def _on_location_hover_motion(self, event, loc_target):
+        self._handle_location_hover(event, loc_target)
+
+    def _on_location_hover_leave(self, event):
+        if hasattr(self, "_hover_popup") and self._hover_popup:
+            try: self._hover_popup.destroy()
+            except: pass
+            self._hover_popup, self._hover_target = None, None
+
+    def _handle_location_hover(self, event, loc_target):
+        if not loc_target: return
+        scr_w, scr_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        popup_w, popup_h = int(scr_w * 2 / 5), int(scr_h * 2 / 5)
+        x_pos = event.x_root + 15 if event.x_root < (scr_w / 2) else event.x_root - popup_w - 15
+        y_pos = event.y_root + 15 if event.y_root < (scr_h / 2) else event.y_root - popup_h - 15
         
-        scr_w = self.winfo_screenwidth()
-        scr_h = self.winfo_screenheight()
-        popup_w = int(scr_w * 2 / 5)
-        popup_h = int(scr_h * 2 / 5)
-
-        mid_x = scr_w / 2
-        mid_y = scr_h / 2
-        x_pos = event.x_root + 15 if event.x_root < mid_x else event.x_root - popup_w - 15
-        y_pos = event.y_root + 15 if event.y_root < mid_y else event.y_root - popup_h - 15
-
+        target_tag = f"COMBAT_LOC_HOVER:{loc_target}"
         if hasattr(self, "_hover_target") and self._hover_target == target_tag:
             if hasattr(self, "_hover_popup") and self._hover_popup:
                 self._hover_popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
             return
-
-        if hasattr(self, "_hover_popup") and self._hover_popup:
-            try: self._hover_popup.destroy()
-            except: pass
-
+            
+        self._on_location_hover_leave(None)
         self._hover_target = target_tag
         
         popup = tk.Toplevel(self)
@@ -2500,23 +2936,23 @@ class CombatRenderer(tk.Frame):
         popup.configure(bg="#fdf1dc", bd=2, relief=tk.SOLID)
         popup.geometry(f"{popup_w}x{popup_h}+{x_pos}+{y_pos}")
         self._hover_popup = popup
-
-        prefix = "LOC_MON_TAG" if p_data['type'] == "Monsters" else "LOC_NPC_TAG"
-        name = p_data['target']
-
+        
         toplevel = self.winfo_toplevel()
         if hasattr(toplevel, "resolve_hover_data"):
-            data, dtype = toplevel.resolve_hover_data(prefix, name)
+            data, dtype = toplevel.resolve_hover_data("LOC_CONN_TAG", str(loc_target))
             if data:
+                from stat_renderer import StatBlockRenderer
                 mini_viewer = StatBlockRenderer(popup)
                 mini_viewer.pack(fill=tk.BOTH, expand=True)
                 mini_viewer.clear_overlays()
                 mini_viewer.text.adjust_height = lambda: None
                 mini_viewer.text.configure(height=1)
-                mini_viewer.render_monster(data)
+                if dtype == "location": mini_viewer.render_location(data)
+                elif dtype == "event": mini_viewer.render_event(data)
                 popup.target_text_widget = mini_viewer.text
             else:
-                tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+                tk.Label(popup, text=f"Profile '{loc_target}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
+
 
 import math
 import json

@@ -221,3 +221,6 @@ data
 data/
 images
 images/
+assets/music_cache
+assets/music_cache/
+browser.json

@@ -42606,6 +42606,37 @@
         ]
     },
     {
+        "name": "s",
+        "source": "Custom",
+        "level": 1,
+        "school": "V",
+        "time": [
+            {
+                "number": 1,
+                "unit": "action"
+            }
+        ],
+        "range": {
+            "type": "point",
+            "distance": {
+                "type": "feet",
+                "amount": 60
+            }
+        },
+        "components": {
+            "v": true,
+            "s": true
+        },
+        "duration": [
+            {
+                "type": "instant"
+            }
+        ],
+        "entries": [
+            "Describe spell."
+        ]
+    },
+    {
         "name": "Sacred Flame",
         "source": "PHB",
         "page": 272,

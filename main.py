@@ -67,6 +67,8 @@ class DnDStatManager(tk.Tk):
         self.query_blocks = []
         self.monster_query_blocks = []
         self.item_query_blocks = []
+        self.npc_query_blocks = []
+        self.combat_query_blocks = []
 
         self._setup_ui()
         self.refresh_tree()
@@ -406,6 +408,59 @@ class DnDStatManager(tk.Tk):
         self.item_tree.configure(yscrollcommand=i_scr.set)
         self.item_tree.bind("<Double-1>", self.on_item_manager_selected)
 
+        self.npc_manager_frame = tk.Frame(self.view_pane, bg="#fdf1dc")
+        tk.Label(self.npc_manager_frame, text="NPC Database", font=("Georgia", 16, "bold"), bg="#fdf1dc", fg="#7a200d").pack(pady=10)
+        self.npc_search_var = tk.StringVar()
+        self.npc_search_var.trace_add("write", lambda *a: self.apply_npc_query())
+        tk.Entry(self.npc_manager_frame, textvariable=self.npc_search_var, font=("Georgia", 14), bg="#ffffff", fg="black", insertbackground="black").pack(fill=tk.X, padx=20, pady=(0, 10))
+        
+        n_tools = tk.Frame(self.npc_manager_frame, bg="#fdf1dc"); n_tools.pack(fill=tk.X, padx=20, pady=(0, 5))
+        for op in ["AND", "OR", "(", ")"]: 
+            tk.Button(n_tools, text=op, bg="#e0cbb0", fg="black", font=("Arial", 9, "bold"), command=lambda o=op: self._add_qblock_generic(self.npc_query_blocks, o, self.render_nblocks, self.apply_npc_query)).pack(side=tk.LEFT, padx=2)
+        tk.Button(n_tools, text="+ Filter", bg="#d9ad6c", fg="black", command=self.open_npc_filter_dialog).pack(side=tk.LEFT, padx=10)
+        tk.Button(n_tools, text="Clear Filters", bg="#ff4d4d", fg="white", command=lambda: (self.npc_query_blocks.clear(), self.render_nblocks(), self.apply_npc_query())).pack(side=tk.RIGHT, padx=2)
+        self.n_query_canvas_frame = tk.Frame(self.npc_manager_frame, bg="#f5e6ce", bd=1, relief=tk.SUNKEN)
+        self.n_query_canvas_frame.pack(fill=tk.X, padx=20, pady=(0, 10), ipady=5)
+
+        n_lf = tk.Frame(self.npc_manager_frame, bg="#fdf1dc"); n_lf.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+        self.npc_tree = ttk.Treeview(n_lf, columns=("name", "level", "cr", "alignment"), show="headings", selectmode="browse")
+        self.npc_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for c, w in [("name", 300), ("level", 100), ("cr", 100), ("alignment", 150)]:
+            self.npc_tree.heading(c, text=c.title(), anchor="w")
+            self.npc_tree.column(c, width=w, anchor="w")
+        self.npc_tree.tag_configure("evenrow", background="#f5e6ce", foreground="black")
+        self.npc_tree.tag_configure("oddrow", background="#fae6c5", foreground="black")
+        n_scr = ttk.Scrollbar(n_lf, orient="vertical", command=self.npc_tree.yview); n_scr.pack(side=tk.RIGHT, fill=tk.Y)
+        self.npc_tree.configure(yscrollcommand=n_scr.set)
+        self.npc_tree.bind("<Double-1>", self.on_npc_manager_selected)
+
+        # --- Combat Database Search Panel ---
+        self.combat_manager_frame = tk.Frame(self.view_pane, bg="#fdf1dc")
+        tk.Label(self.combat_manager_frame, text="Combat Database", font=("Georgia", 16, "bold"), bg="#fdf1dc", fg="#7a200d").pack(pady=10)
+        self.combat_search_var = tk.StringVar()
+        self.combat_search_var.trace_add("write", lambda *a: self.apply_combat_query())
+        tk.Entry(self.combat_manager_frame, textvariable=self.combat_search_var, font=("Georgia", 14), bg="#ffffff", fg="black", insertbackground="black").pack(fill=tk.X, padx=20, pady=(0, 10))
+        
+        c_tools = tk.Frame(self.combat_manager_frame, bg="#fdf1dc"); c_tools.pack(fill=tk.X, padx=20, pady=(0, 5))
+        for op in ["AND", "OR", "(", ")"]: 
+            tk.Button(c_tools, text=op, bg="#e0cbb0", fg="black", font=("Arial", 9, "bold"), command=lambda o=op: self._add_qblock_generic(self.combat_query_blocks, o, self.render_cblocks, self.apply_combat_query)).pack(side=tk.LEFT, padx=2)
+        tk.Button(c_tools, text="+ Filter", bg="#d9ad6c", fg="black", command=self.open_combat_filter_dialog).pack(side=tk.LEFT, padx=10)
+        tk.Button(c_tools, text="Clear Filters", bg="#ff4d4d", fg="white", command=lambda: (self.combat_query_blocks.clear(), self.render_cblocks(), self.apply_combat_query())).pack(side=tk.RIGHT, padx=2)
+        self.c_query_canvas_frame = tk.Frame(self.combat_manager_frame, bg="#f5e6ce", bd=1, relief=tk.SUNKEN)
+        self.c_query_canvas_frame.pack(fill=tk.X, padx=20, pady=(0, 10), ipady=5)
+
+        c_lf = tk.Frame(self.combat_manager_frame, bg="#fdf1dc"); c_lf.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+        self.combat_tree = ttk.Treeview(c_lf, columns=("name", "time", "over", "outcome"), show="headings", selectmode="browse")
+        self.combat_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for c, w in [("name", 300), ("time", 150), ("over", 100), ("outcome", 200)]:
+            self.combat_tree.heading(c, text=c.title(), anchor="w")
+            self.combat_tree.column(c, width=w, anchor="w")
+        self.combat_tree.tag_configure("evenrow", background="#f5e6ce", foreground="black")
+        self.combat_tree.tag_configure("oddrow", background="#fae6c5", foreground="black")
+        c_scr = ttk.Scrollbar(c_lf, orient="vertical", command=self.combat_tree.yview); c_scr.pack(side=tk.RIGHT, fill=tk.Y)
+        self.combat_tree.configure(yscrollcommand=c_scr.set)
+        self.combat_tree.bind("<Double-1>", self.on_combat_manager_selected)
+
         self.placeholder_frame = tk.Frame(self.view_pane, bg="#fdf1dc"); self.placeholder_lbl = tk.Label(self.placeholder_frame, text="", font=("Georgia", 14, "italic"), bg="#fdf1dc", fg="black"); self.placeholder_lbl.pack(expand=True)
         def commit_music_metadata_changes(meta_dict):
             if self.current_state and self.current_state.data:
@@ -562,7 +617,7 @@ class DnDStatManager(tk.Tk):
     def _show_current_state_view(self):
         # 1. Clear out all viewport panel states from the screen space partition layout
         for panel in [self.stat_viewer, self.combat_viewer, self.search_frame, self.spell_manager_frame, self.placeholder_frame, self.map_graph_viewer, self.events_graph_viewer,
-                      self.item_manager_frame]: 
+                      self.item_manager_frame, self.npc_manager_frame, self.combat_manager_frame]: 
             panel.pack_forget()
             
         if not self.current_state: return
@@ -641,6 +696,14 @@ class DnDStatManager(tk.Tk):
         elif state.node.path.resolve() == self.objects_dir.resolve() or state.node.name == "Objects":
             target_panel = self.item_manager_frame
             self.apply_item_query()
+
+        elif state.node.path.resolve() == self.npcs_dir.resolve():
+            target_panel = self.npc_manager_frame
+            self.apply_npc_query()
+
+        elif state.node.path.resolve() == self.combats_dir.resolve():
+            target_panel = self.combat_manager_frame
+            self.apply_combat_query()
             
         elif state.view_type in ["location", "event"]:
             target_panel = self.stat_viewer
@@ -2052,6 +2115,194 @@ class DnDStatManager(tk.Tk):
                 json.dump(serialized_data, f, indent=4)
         except Exception as e:
             print(f"Failed to record workspace entity music metadata updates: {e}")
+
+    def render_nblocks(self): 
+        self._render_qblocks_generic(self.n_query_canvas_frame, self.npc_query_blocks, lambda idx: self._remove_qblock_generic(self.npc_query_blocks, idx, self.render_nblocks, self.apply_npc_query), lambda idx: self._toggle_qblock_generic(self.npc_query_blocks, idx, self.render_nblocks, self.apply_npc_query))
+
+    def render_cblocks(self): 
+        self._render_qblocks_generic(self.c_query_canvas_frame, self.combat_query_blocks, lambda idx: self._remove_qblock_generic(self.combat_query_blocks, idx, self.render_cblocks, self.apply_combat_query), lambda idx: self._toggle_qblock_generic(self.combat_query_blocks, idx, self.render_cblocks, self.apply_combat_query))
+
+    def apply_npc_query(self):
+        for item in self.npc_tree.get_children(): self.npc_tree.delete(item)
+        q_str = self.npc_search_var.get().lower()
+        count = 0
+        for p in self.npcs_dir.rglob("*.json"):
+            if p.name == "folder_metadata.json": continue
+            try:
+                with open(p, "r", encoding="utf-8") as f: data = json.load(f)
+            except: continue
+            if q_str and q_str not in data.get("name", "").lower(): continue
+            
+            if self.npc_query_blocks:
+                expr = ""
+                for b in self.npc_query_blocks:
+                    if b in ["AND", "OR", "(", ")"]: expr += f" {b.lower()} "
+                    else:
+                        m = True
+                        if b["type"] == "level" and (int(data.get("level", 0)) < b["min"] or int(data.get("level", 0)) > b["max"]): m = False
+                        elif b["type"] == "cr" and (preprocess.parse_cr(data.get("cr", "0")) < b["min"] or preprocess.parse_cr(data.get("cr", "0")) > b["max"]): m = False
+                        elif b["type"] == "alignment":
+                            align_str = "".join(data.get("alignment", ["N"])).lower()
+                            if b["val"].lower() not in align_str: m = False
+                        expr += " True " if m else " False "
+                try:
+                    if not eval(expr): continue
+                except: pass
+                
+            tag = "evenrow" if count % 2 == 0 else "oddrow"
+            cr_val = data.get("cr", data.get("challenge", "—"))
+            align_val = ", ".join(data.get("alignment", ["N"])) if isinstance(data.get("alignment"), list) else str(data.get("alignment", "N"))
+            self.npc_tree.insert("", tk.END, values=(data.get("name", p.parent.name), str(data.get("level", 1)), cr_val, align_val), tags=(tag,))
+            count += 1
+
+    def apply_combat_query(self):
+        for item in self.combat_tree.get_children(): self.combat_tree.delete(item)
+        q_str = self.combat_search_var.get().lower()
+        count = 0
+        for p in self.combats_dir.rglob("*.json"):
+            if p.name == "folder_metadata.json": continue
+            try:
+                with open(p, "r", encoding="utf-8") as f: data = json.load(f)
+            except: continue
+            if q_str and q_str not in data.get("name", "").lower(): continue
+            
+            if self.combat_query_blocks:
+                expr = ""
+                for b in self.combat_query_blocks:
+                    if b in ["AND", "OR", "(", ")"]: expr += f" {b.lower()} "
+                    else:
+                        m = True
+                        if b["type"] == "over" and data.get("over", "No").lower() != b["val"].lower(): m = False
+                        elif b["type"] == "location":
+                            loc_match = False
+                            if b["val"].lower() in str(data.get("location", "")).lower(): loc_match = True
+                            for loc in data.get("locations", []):
+                                loc_name = loc.get("name") if isinstance(loc, dict) else str(loc)
+                                if b["val"].lower() in loc_name.lower(): loc_match = True
+                            if not loc_match: m = False
+                        expr += " True " if m else " False "
+                try:
+                    if not eval(expr): continue
+                except: pass
+                
+            tag = "evenrow" if count % 2 == 0 else "oddrow"
+            self.combat_tree.insert("", tk.END, values=(data.get("name", p.parent.name), data.get("time", "Any"), data.get("over", "No"), data.get("outcome", "None")), tags=(tag,))
+            count += 1
+
+    def open_npc_filter_dialog(self):
+        alignments = set()
+        for p in self.npcs_dir.rglob("*.json"):
+            if p.name == "folder_metadata.json": continue
+            try:
+                with open(p, "r", encoding="utf-8") as f: data = json.load(f)
+                align_val = data.get("alignment", ["N"])
+                if isinstance(align_val, list):
+                    for a in align_val: alignments.add(str(a).upper())
+                else: alignments.add(str(align_val).upper())
+            except: pass
+            
+        # Hardcoded slider limits established at a fixed scale constraint 
+        max_lvl = 30
+        max_cr = 30
+        align_list = sorted(list(alignments)) if alignments else ["LG", "NG", "CG", "LN", "N", "CN", "LE", "NE", "CE"]
+        
+        d = tk.Toplevel(self); d.title("Build NPC Filter"); d.geometry("450x450"); d.configure(bg="#fdf1dc")
+        logic_var = tk.StringVar(value="AND")
+        btn_logic = tk.Button(d, text="AND", bg="#ff4d4d", fg="white", font=("Arial", 12, "bold"), width=10, command=lambda: (logic_var.set("OR") if logic_var.get() == "AND" else logic_var.set("AND"), btn_logic.config(text=logic_var.get(), bg="#4a90e2" if logic_var.get() == "OR" else "#ff4d4d")))
+        btn_logic.pack(pady=15)
+        f = tk.Frame(d, bg="#fdf1dc"); f.pack(anchor="center", padx=20, pady=10)
+        
+        tk.Label(f, text="Minimum Level:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="e", pady=8)
+        min_lvl = tk.Scale(f, from_=0, to=max_lvl, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180); min_lvl.grid(row=0, column=1, pady=8)
+        tk.Label(f, text="Maximum Level:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="e", pady=8)
+        max_lvl_sc = tk.Scale(f, from_=0, to=max_lvl, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180); max_lvl_sc.set(max_lvl); max_lvl_sc.grid(row=1, column=1, pady=8)
+        
+        tk.Label(f, text="Minimum CR:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky="e", pady=8)
+        min_cr = tk.Scale(f, from_=0, to=max_cr, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180); min_cr.grid(row=2, column=1, pady=8)
+        tk.Label(f, text="Maximum CR:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky="e", pady=8)
+        max_cr_sc = tk.Scale(f, from_=0, to=max_cr, orient=tk.HORIZONTAL, bg="#fdf1dc", fg="black", highlightthickness=0, length=180); max_cr_sc.set(max_cr); max_cr_sc.grid(row=3, column=1, pady=8)
+        
+        tk.Label(f, text="Alignment:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky="e", pady=8)
+        a_cb = ttk.Combobox(f, values=["All"] + align_list, state="readonly", width=22); a_cb.set("All"); a_cb.grid(row=4, column=1, pady=8, padx=10)
+        
+        def apply_f():
+            filters = []
+            if min_lvl.get() > 0 or max_lvl_sc.get() < max_lvl: filters.append({"type": "level", "min": min_lvl.get(), "max": max_lvl_sc.get()})
+            if min_cr.get() > 0 or max_cr_sc.get() < max_cr: filters.append({"type": "cr", "min": min_cr.get(), "max": max_cr_sc.get()})
+            if a_cb.get() != "All": filters.append({"type": "alignment", "val": a_cb.get()})
+            if filters:
+                if self.npc_query_blocks: self.npc_query_blocks.append(logic_var.get())
+                for i, fb in enumerate(filters):
+                    self.npc_query_blocks.append(fb)
+                    if i < len(filters) - 1: self.npc_query_blocks.append(logic_var.get())
+                self.render_nblocks(); self.apply_npc_query()
+            d.destroy()
+        tk.Button(d, text="Apply Filters", bg="#d9ad6c", font=("Arial", 11, "bold"), command=apply_f).pack(pady=20)
+
+    def open_combat_filter_dialog(self):
+        locations = set()
+        for p in self.combats_dir.rglob("*.json"):
+            if p.name == "folder_metadata.json": continue
+            try:
+                with open(p, "r", encoding="utf-8") as f: data = json.load(f)
+                if data.get("location") and data.get("location") != "Any": locations.add(str(data.get("location")))
+                for loc in data.get("locations", []):
+                    loc_name = loc.get("name") if isinstance(loc, dict) else str(loc)
+                    if loc_name and loc_name != "Any": locations.add(loc_name)
+            except: pass
+            
+        loc_list = sorted(list(locations))
+        
+        d = tk.Toplevel(self); d.title("Build Combat Filter"); d.geometry("450x350"); d.configure(bg="#fdf1dc")
+        logic_var = tk.StringVar(value="AND")
+        btn_logic = tk.Button(d, text="AND", bg="#ff4d4d", fg="white", font=("Arial", 12, "bold"), width=10, command=lambda: (logic_var.set("OR") if logic_var.get() == "AND" else logic_var.set("AND"), btn_logic.config(text=logic_var.get(), bg="#4a90e2" if logic_var.get() == "OR" else "#ff4d4d")))
+        btn_logic.pack(pady=15)
+        f = tk.Frame(d, bg="#fdf1dc"); f.pack(anchor="center", padx=20, pady=10)
+        
+        tk.Label(f, text="Is Over:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="e", pady=8)
+        o_cb = ttk.Combobox(f, values=["All", "Yes", "No"], state="readonly", width=22); o_cb.set("All"); o_cb.grid(row=0, column=1, pady=8, padx=10)
+        
+        tk.Label(f, text="Location:", bg="#fdf1dc", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="e", pady=8)
+        l_cb = ttk.Combobox(f, values=["All"] + loc_list, state="readonly", width=22); l_cb.set("All"); l_cb.grid(row=1, column=1, pady=8, padx=10)
+        
+        def apply_f():
+            filters = []
+            if o_cb.get() != "All": filters.append({"type": "over", "val": o_cb.get()})
+            if l_cb.get() != "All": filters.append({"type": "location", "val": l_cb.get()})
+            if filters:
+                if self.combat_query_blocks: self.combat_query_blocks.append(logic_var.get())
+                for i, fb in enumerate(filters):
+                    self.combat_query_blocks.append(fb)
+                    if i < len(filters) - 1: self.combat_query_blocks.append(logic_var.get())
+                self.render_cblocks(); self.apply_combat_query()
+            d.destroy()
+        tk.Button(d, text="Apply Filters", bg="#d9ad6c", font=("Arial", 11, "bold"), command=apply_f).pack(pady=20)
+
+    def on_npc_manager_selected(self, event):
+        sel = self.npc_tree.selection()
+        if not sel: return
+        name = self.npc_tree.item(sel[0])['values'][0]
+        for p in self.npcs_dir.rglob("*.json"):
+            if p.name == "folder_metadata.json": continue
+            try:
+                with open(p, "r", encoding="utf-8") as f: data = json.load(f)
+                if data.get("name", "").lower() == name.lower():
+                    self.open_page(Node(name=data["name"], path=p.parent, is_entity=True, level=1, stat_path=p), view_type="npc", stat_path=p, is_reference_click=True)
+                    break
+            except: pass
+
+    def on_combat_manager_selected(self, event):
+        sel = self.combat_tree.selection()
+        if not sel: return
+        name = self.combat_tree.item(sel[0])['values'][0]
+        for p in self.combats_dir.rglob("*.json"):
+            if p.name == "folder_metadata.json": continue
+            try:
+                with open(p, "r", encoding="utf-8") as f: data = json.load(f)
+                if data.get("name", "").lower() == name.lower():
+                    self.open_page(Node(name=data["name"], path=p.parent, is_entity=True, level=1, stat_path=p), view_type="combat", stat_path=p, is_reference_click=True)
+                    break
+            except: pass
 
 
 def main():

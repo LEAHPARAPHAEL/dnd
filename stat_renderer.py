@@ -2272,7 +2272,6 @@ class StatBlockRenderer(tk.Frame):
                 
                 self.text.insert(tk.END, "\n")
                 return
-
 class CombatRenderer(tk.Frame):
     def __init__(self, parent, open_statblock_cb, save_cb, add_bestiary_cb, add_camp_mon_cb, add_camp_npc_cb, cancel_cb, *args, **kwargs):
         super().__init__(parent, bg="#fdf1dc", *args, **kwargs)
@@ -2304,6 +2303,29 @@ class CombatRenderer(tk.Frame):
         self.selected_row_info = None
         self.edit_mode = False
 
+        # --- KEYBOARD SHORTCUT NAVIGATION BINDINGS ---
+        parent.winfo_toplevel().bind("<Up>", self._on_arrow_navigate_up, add="+")
+        parent.winfo_toplevel().bind("<Down>", self._on_arrow_navigate_down, add="+")
+
+    def _on_arrow_navigate_up(self, event):
+        if not self.winfo_ismapped() or not self.participant_rows: return
+        if not self.selected_row_info or self.selected_row_info not in self.participant_rows:
+            self._select_combatant_row(self.participant_rows[0])
+        else:
+            idx = self.participant_rows.index(self.selected_row_info)
+            new_idx = max(0, idx - 1)
+            self._select_combatant_row(self.participant_rows[new_idx])
+        return "break"
+
+    def _on_arrow_navigate_down(self, event):
+        if not self.winfo_ismapped() or not self.participant_rows: return
+        if not self.selected_row_info or self.selected_row_info not in self.participant_rows:
+            self._select_combatant_row(self.participant_rows[0])
+        else:
+            idx = self.participant_rows.index(self.selected_row_info)
+            new_idx = min(len(self.participant_rows) - 1, idx + 1)
+            self._select_combatant_row(self.participant_rows[new_idx])
+        return "break"
 
     def _fetch_max_hp(self, target_path):
         p = Path(target_path)
@@ -2350,7 +2372,6 @@ class CombatRenderer(tk.Frame):
             p["damage"] = max_hp - curr_hp
 
     def render_combat(self, combat_data, combat_dir):
-        # Fix: Always refresh current view data when switching back to display mode to clear stale states
         if not hasattr(self, 'original_data') or self.combat_dir != combat_dir or not self.edit_mode:
             self.original_data = copy.deepcopy(combat_data)
             self.current_data = copy.deepcopy(combat_data)
@@ -2358,7 +2379,6 @@ class CombatRenderer(tk.Frame):
         self._redraw_workspace()
 
     def _auto_save(self):
-        """Saves current interactive workspace properties down to disk automatically."""
         self._sync_all_rows()
         self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
         if not self.edit_mode:
@@ -2377,16 +2397,13 @@ class CombatRenderer(tk.Frame):
             current_hp_text = hp_widget.get().strip()
             current_hp = int(current_hp_text) if current_hp_text.lstrip('-').isdigit() else 0
             
-            new_hp = current_hp + delta
-            if new_hp < 0: 
-                new_hp = 0
-            
+            new_hp = max(0, current_hp + delta)
             hp_widget.delete(0, tk.END)
             hp_widget.insert(0, str(new_hp))
             
             if "update_colors_cb" in self.selected_row_info:
                 self.selected_row_info["update_colors_cb"]()
-            self._auto_save() # Auto-save HP changes
+            self._auto_save()
         except Exception: pass
 
     def _realtime_sort(self, event=None):
@@ -2403,7 +2420,83 @@ class CombatRenderer(tk.Frame):
         if focused_widget and focused_widget.winfo_exists():
             try: focused_widget.focus_set()
             except: pass
-        self._auto_save() # Auto-save adjustments to initiative orders or alignment side states
+        self._auto_save()
+
+    # --- DRAG AND DROP HANDLERS WITH CASCADING CHAIN REACTION ---
+    def _on_row_drag_start(self, event, row_info):
+        self._select_combatant_row(row_info)
+        row_info["frame"].configure(highlightbackground="orange", highlightcolor="orange")
+
+    def _on_row_drag_motion(self, event, row_info):
+        pass 
+
+    def _on_row_drag_end(self, event, row_info):
+        row_info["frame"].configure(highlightbackground="yellow" if self.selected_row_info == row_info else "black")
+        
+        if not self.parts_frame.winfo_children(): return
+        container_y = self.parts_frame.winfo_rooty()
+        mouse_y = event.y_root - container_y
+        
+        row_positions = []
+        for r in self.participant_rows:
+            f = r["frame"]
+            if f.winfo_exists():
+                row_positions.append((f.winfo_y() + f.winfo_height() / 2, r))
+        
+        row_positions.sort(key=lambda x: x[0])
+        
+        target_idx = 0
+        for midpoint, r in row_positions:
+            if mouse_y > midpoint:
+                target_idx += 1
+                
+        current_idx = self.participant_rows.index(row_info)
+        if current_idx == target_idx or current_idx == target_idx - 1:
+            return 
+
+        self.participant_rows.remove(row_info)
+        if target_idx > current_idx:
+            target_idx -= 1
+        self.participant_rows.insert(target_idx, row_info)
+        
+        if target_idx > 0:
+            before_row = self.participant_rows[target_idx - 1]
+            try: before_init = int(before_row["init_en"].get().strip())
+            except: before_init = 0
+            new_init = before_init + 1
+        else:
+            if len(self.participant_rows) > 1:
+                try: after_init = int(self.participant_rows[1]["init_en"].get().strip())
+                except: after_init = 0
+                new_init = after_init + 1
+            else:
+                new_init = 10
+                
+        row_info["init_en"].delete(0, tk.END)
+        row_info["init_en"].insert(0, str(new_init))
+        
+        if self.selected_row_info == row_info:
+            self.top_init_entry.delete(0, tk.END)
+            self.top_init_entry.insert(0, str(new_init))
+            
+        self._apply_chain_reaction()
+        self._realtime_sort()
+
+    def _apply_chain_reaction(self):
+        """Ripples initiative values upward to maintain descending turn hierarchy structure."""
+        for i in range(len(self.participant_rows) - 2, -1, -1):
+            try: curr_init = int(self.participant_rows[i]["init_en"].get().strip())
+            except: curr_init = 0
+            try: next_init = int(self.participant_rows[i+1]["init_en"].get().strip())
+            except: next_init = 0
+            
+            if curr_init <= next_init:
+                new_val = next_init + 1
+                self.participant_rows[i]["init_en"].delete(0, tk.END)
+                self.participant_rows[i]["init_en"].insert(0, str(new_val))
+                if self.selected_row_info == self.participant_rows[i]:
+                    self.top_init_entry.delete(0, tk.END)
+                    self.top_init_entry.insert(0, str(new_val))
 
     def _open_status_dialog(self, row_info):
         from stat_renderer import CONDITIONS_DB
@@ -2421,7 +2514,7 @@ class CombatRenderer(tk.Frame):
         def apply_selection():
             row_info["active_statuses"] = [c.title() for c in sorted(list(CONDITIONS_DB.keys())) if c in selected_conds]
             self._refresh_status_chips_display(row_info)
-            self._auto_save() # Auto-save applied status effects
+            self._auto_save()
             dialog.destroy()
 
         btn_frame = tk.Frame(dialog, bg="#fdf1dc", pady=10)
@@ -2482,9 +2575,9 @@ class CombatRenderer(tk.Frame):
             self.selected_row_info["update_colors_cb"]()
         self._realtime_sort()
 
-    def _on_top_init_changed(self, event=None):
+    def _on_top_init_entry_changed(self, event=None):
         if not self.selected_row_info: return
-        val = self.top_init_combo.get()
+        val = self.top_init_entry.get().strip()
         self.selected_row_info["init_en"].delete(0, tk.END)
         self.selected_row_info["init_en"].insert(0, val)
         self._realtime_sort()
@@ -2533,7 +2626,6 @@ class CombatRenderer(tk.Frame):
             self._sync_all_rows()
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
             self.original_data = copy.deepcopy(self.current_data)
-            # Triggers non-background open_page navigation flow back into clean view mode
             self.save_cb(self.combat_dir, self.current_data)
 
         def cancel_action():
@@ -2556,9 +2648,9 @@ class CombatRenderer(tk.Frame):
         fields_f.grid_columnconfigure(1, weight=1)
 
         if self.edit_mode:
-            # Edit Mode Input Fields (Rows 0 to 4)
             for r, (lbl, key, w) in enumerate([("Name:", "name", 40), ("Time:", "time", 40), ("Description:", "description", 60)]):
                 tk.Label(fields_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="ne", pady=4)
+                from stat_renderer import AutoHeightText
                 txt = AutoHeightText(fields_f, canvas_to_refresh=self.main_canvas, width=w, height=1, font=self.body_font, wrap=tk.WORD, bd=1, relief=tk.SOLID)
                 txt.insert("1.0", self.current_data.get(key, ""))
                 txt.grid(row=r, column=1, sticky="w", padx=10, pady=4)
@@ -2575,10 +2667,8 @@ class CombatRenderer(tk.Frame):
             self.out_txt.insert("1.0", self.current_data.get("outcome", ""))
             self.out_txt.grid(row=4, column=1, sticky="w", padx=10, pady=4)
             
-            
             tk.Label(fields_f, text="Locations:", bg="#fdf1dc", font=self.body_bold).grid(row=5, column=0, sticky="ne", pady=4)
             loc_sec_frame = tk.Frame(fields_f, bg="#fdf1dc")
-            # Changed from sticky="w" to sticky="ew" to take up full available frame width
             loc_sec_frame.grid(row=5, column=1, sticky="ew", padx=10, pady=4)
             
             self.combat_location_items = []
@@ -2587,7 +2677,6 @@ class CombatRenderer(tk.Frame):
             def draw_loc_row(name):
                 loc_name = name.get("name") if isinstance(name, dict) else str(name)
                 row = tk.Frame(loc_lst, bg="#e0cbb0", pady=4, padx=10, bd=1, relief=tk.SOLID)
-                # Enforce horizontal filling across full panel space
                 row.pack(fill=tk.X, expand=True, pady=2)
                 tk.Label(row, text=loc_name, font=self.body_bold, bg="#e0cbb0", fg="black").pack(side=tk.LEFT)
                 item_dict = {"name": name, "frame": row}
@@ -2612,13 +2701,11 @@ class CombatRenderer(tk.Frame):
             for loc in self.current_data.get("locations", []): 
                 draw_loc_row(loc)
         else:
-            # Display Mode Dashboard Read-Only Text Labels
             for r, (lbl, key) in enumerate([("Name:", "name"), ("Time:", "time"), ("Description:", "description"), ("Over:", "over"), ("Outcome:", "outcome")]):
                 tk.Label(fields_f, text=lbl, bg="#fdf1dc", font=self.body_bold).grid(row=r, column=0, sticky="nw", pady=2)
                 val_text = str(self.current_data.get(key, ""))
                 tk.Label(fields_f, text=val_text, bg="#fdf1dc", font=self.body_font, fg="black", justify=tk.LEFT, anchor="w", wraplength=600).grid(row=r, column=1, sticky="w", padx=10, pady=2)
 
-            # --- Location Row Hyperlink Formatting under Display Mode (Separate Bulleted Rows) ---
             tk.Label(fields_f, text="Locations:", bg="#fdf1dc", font=self.body_bold).grid(row=5, column=0, sticky="nw", pady=2)
             locs_frame = tk.Frame(fields_f, bg="#fdf1dc")
             locs_frame.grid(row=5, column=1, sticky="ew", padx=10, pady=2)
@@ -2628,11 +2715,8 @@ class CombatRenderer(tk.Frame):
                 tk.Label(locs_frame, text="None", bg="#fdf1dc", font=self.body_italic, fg="black").pack(anchor="w")
             else:
                 for loc in locs_list:
-                    # Render each element on its own individual horizontal layout row line
                     row_f = tk.Frame(locs_frame, bg="#fdf1dc")
                     row_f.pack(fill=tk.X, anchor="w", pady=1)
-                    
-                    # Prepend standard entity bullet point character matching render_campaign_node architecture
                     tk.Label(row_f, text="• ", bg="#fdf1dc", font=self.body_bold, fg="black").pack(side=tk.LEFT)
                     
                     loc_name = loc.get("name") if isinstance(loc, dict) else str(loc)
@@ -2641,60 +2725,58 @@ class CombatRenderer(tk.Frame):
                     lbl_link = tk.Label(row_f, text=loc_name, bg="#fdf1dc", fg="#4a90e2", font=self.body_link, cursor="hand2")
                     lbl_link.pack(side=tk.LEFT)
                     
-                    # Bind navigation and minirenderer hover tooltips onto individual items cleanly
                     lbl_link.bind("<Button-1>", lambda e, path=loc_target: getattr(self.winfo_toplevel(), "on_location_link_clicked")(path, "Locations"))
                     lbl_link.bind("<Enter>", lambda e, lt=loc_target: self._on_location_hover_enter(e, lt))
                     lbl_link.bind("<Motion>", lambda e, lt=loc_target: self._on_location_hover_motion(e, lt))
                     lbl_link.bind("<Leave>", self._on_location_hover_leave)
 
-        # The combat tracker section below remains fully interactive in both modes
         tk.Label(self.main_inner, text="COMBATANTS", font=self.header_font, fg="#58180d", bg="#fdf1dc").pack(anchor="w", pady=(20, 5))
         controls_row1 = tk.Frame(self.main_inner, bg="#fdf1dc")
         controls_row1.pack(fill=tk.X, pady=2)
 
-        # --- COMBATANTS LIST SECTION CONTROLS ---
         def append_combatant(target_path, folder_type):
             self._sync_all_rows()
             p_obj = Path(target_path)
-            short_name = p_obj.stem if p_obj.is_file() else p_obj.name
+            short_name = p_obj.get("name") if isinstance(p_obj, dict) else (p_obj.stem if p_obj.is_file() else p_obj.name)
             new_fighter = {
-                "name": short_name, "target": str(p_obj.resolve()), "type": folder_type,
+                "name": short_name, "target": str(p_obj.resolve()) if hasattr(p_obj, 'resolve') else str(p_obj), "type": folder_type,
                 "side": "Enemy" if folder_type == "Monsters" else "Neutral",
                 "init": 0, "damage": 0, "dead": False, "statuses": []
             }
             self.current_data.setdefault("participants", []).append(new_fighter)
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
-            self._auto_save() # Auto-save added combatants
+            self._auto_save()
             self._redraw_workspace()
-
 
         tk.Button(controls_row1, text="+ New Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_bestiary_cb(self.combat_dir, append_combatant)).pack(side=tk.LEFT, padx=3)
         tk.Button(controls_row1, text="+ Add Existing Monster", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_mon_cb(append_combatant)).pack(side=tk.LEFT, padx=3)
         tk.Button(controls_row1, text="+ Add NPC", bg="#d9ad6c", fg="black", font=("Arial", 9, "bold"), command=lambda: self.add_camp_npc_cb(append_combatant)).pack(side=tk.LEFT, padx=3)
 
-        controls_row2 = tk.Frame(self.main_inner, bg="#fdf1dc", pady=5)
-        controls_row2.pack(fill=tk.X, pady=(2, 10))
+        controls_row2 = tk.Frame(self.main_inner, bg="#fdf1dc", pady=2)
+        controls_row2.pack(fill=tk.X, pady=2)
 
         tk.Label(controls_row2, text="Initiative:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(3, 2))
-        init_vals = [str(i) for i in range(-5, 31)]
-        self.top_init_combo = ttk.Combobox(controls_row2, values=init_vals, state="readonly", width=5)
-        self.top_init_combo.pack(side=tk.LEFT, padx=2)
-        self.top_init_combo.bind("<<ComboboxSelected>>", self._on_top_init_changed)
+        self.top_init_entry = tk.Entry(controls_row2, font=("Arial", 9, "bold"), width=6, bd=1, relief=tk.SOLID)
+        self.top_init_entry.pack(side=tk.LEFT, padx=2)
+        self.top_init_entry.bind("<KeyRelease>", self._on_top_init_entry_changed)
 
         self.top_status_btn = tk.Button(controls_row2, text="STATUSES", bg="#fae6c5", fg="black", font=("Arial", 9, "bold"), command=lambda: self._open_status_dialog(self.selected_row_info) if self.selected_row_info else messagebox.showinfo("Selection Required", "Please select a combatant row first."))
         self.top_status_btn.pack(side=tk.LEFT, padx=15)
 
-        tk.Label(controls_row2, text="Quick HP:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(5, 2))
-        for mod in [1, 5, 10]:
-            tk.Button(controls_row2, text=f"+{mod}", bg="#5cb85c", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(m)).pack(side=tk.LEFT, padx=1)
-        for mod in [1, 5, 10]:
-            tk.Button(controls_row2, text=f"-{mod}", bg="#d9534f", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(-m)).pack(side=tk.LEFT, padx=1)
+        controls_row3 = tk.Frame(self.main_inner, bg="#fdf1dc", pady=2)
+        controls_row3.pack(fill=tk.X, pady=(2, 10))
 
-        tk.Label(controls_row2, text="Set State:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(15, 2))
-        tk.Button(controls_row2, text="Ally", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Ally")).pack(side=tk.LEFT, padx=1)
-        tk.Button(controls_row2, text="Neutral", bg="#8a8a8a", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Neutral")).pack(side=tk.LEFT, padx=1)
-        tk.Button(controls_row2, text="Enemy", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Enemy")).pack(side=tk.LEFT, padx=1)
-        tk.Button(controls_row2, text="Dead", bg="#333333", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Dead")).pack(side=tk.LEFT, padx=1)
+        tk.Label(controls_row3, text="Quick HP:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(3, 2))
+        for mod in [1, 5, 10]:
+            tk.Button(controls_row3, text=f"+{mod}", bg="#5cb85c", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(m)).pack(side=tk.LEFT, padx=1)
+        for mod in [1, 5, 10]:
+            tk.Button(controls_row3, text=f"-{mod}", bg="#d9534f", fg="white", font=("Arial", 9, "bold"), width=4, command=lambda m=mod: self._modify_hp_via_top(-m)).pack(side=tk.LEFT, padx=1)
+
+        tk.Label(controls_row3, text="Set State:", bg="#fdf1dc", font=("Arial", 9, "bold"), fg="#58180d").pack(side=tk.LEFT, padx=(15, 2))
+        tk.Button(controls_row3, text="Ally", bg="#4a90e2", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Ally")).pack(side=tk.LEFT, padx=1)
+        tk.Button(controls_row3, text="Neutral", bg="#8a8a8a", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Neutral")).pack(side=tk.LEFT, padx=1)
+        tk.Button(controls_row3, text="Enemy", bg="#ff4d4d", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Enemy")).pack(side=tk.LEFT, padx=1)
+        tk.Button(controls_row3, text="Dead", bg="#333333", fg="white", font=("Arial", 9, "bold"), command=lambda: self._change_selected_state("Dead")).pack(side=tk.LEFT, padx=1)
 
         self.parts_frame = tk.Frame(self.main_inner, bg="#fdf1dc")
         self.parts_frame.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -2704,7 +2786,6 @@ class CombatRenderer(tk.Frame):
 
     def _modify_hp_via_top(self, delta):
         self._modify_selected_hp(delta)
-
 
     def _refresh_status_chips_display(self, row_info):
         sb = row_info["status_box"]
@@ -2728,9 +2809,10 @@ class CombatRenderer(tk.Frame):
             self.selected_row_info["frame"].configure(highlightthickness=2, highlightbackground="black", highlightcolor="black")
         self.selected_row_info = row_info
         row_info["frame"].configure(highlightthickness=2, highlightbackground="yellow", highlightcolor="yellow")
+        
         curr_init = str(row_info["init_en"].get().strip())
-        if curr_init in [str(i) for i in range(-5, 31)]: self.top_init_combo.set(curr_init)
-        else: self.top_init_combo.set("0")
+        self.top_init_entry.delete(0, tk.END)
+        self.top_init_entry.insert(0, curr_init)
 
     def _build_live_participant_panel(self, p):
         def get_panel_color(side, is_dead):
@@ -2745,43 +2827,55 @@ class CombatRenderer(tk.Frame):
         init_hidden_entry.insert(0, str(p.get("init", 0)))
         d_var = tk.BooleanVar(value=p.get("dead", False))
         s_var = tk.StringVar(value=p.get("side", "Neutral"))
-        row_info = {"data": p, "frame": panel, "active_statuses": p.get("statuses", []), "init_en": init_hidden_entry, "dead_var": d_var, "side_var": s_var}
-        panel.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
+        
+        from stat_renderer import AutoHeightText
+        status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=15, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD)
+        
+        # Fix: Instantiate hp_container first so children can be correctly parented right away
+        hp_container = tk.Frame(panel, bg=initial_color, width=110)
+        hp_container.pack_propagate(False)
+        hp_container.pack(side=tk.RIGHT, padx=10, fill=tk.Y)
+
+        hp_en = AutoHeightText(hp_container, canvas_to_refresh=self.main_canvas, width=4, font=("Arial", 10, "bold"), bd=1, relief=tk.SOLID)
+        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=25, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
+        
+        max_hp = self._fetch_max_hp(p.get("target", ""))
+        current_hp = max_hp - p.get("damage", 0)
+
+        # Correctly bound master parents as the first positional arguments
+        lbl_max = tk.Label(hp_container, text=f"/ {max_hp}", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
+        lbl_max.pack(side=tk.RIGHT)
+
+        hp_en.delete(0, tk.END)
+        hp_en.insert(0, str(current_hp))
+        hp_en.pack(side=tk.RIGHT, padx=2)
+        
+        lbl_hp = tk.Label(hp_container, text="HP:", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
+        lbl_hp.pack(side=tk.RIGHT, padx=1)
+
+        name_en.delete(0, tk.END)
+        name_en.insert(0, p["name"])
+        name_en.pack(side=tk.LEFT, padx=5)
+
+        row_info = {
+            "data": p, "frame": panel, "active_statuses": p.get("statuses", []), "init_en": init_hidden_entry, 
+            "dead_var": d_var, "side_var": s_var, "status_box": status_box, "hp_en": hp_en, "name_var": name_en,
+            "lbl_max": lbl_max, "lbl_hp": lbl_hp, "hp_container": hp_container
+        }
+        
+        panel.bind("<Button-1>", lambda e, r=row_info: self._on_row_drag_start(e, r))
+        panel.bind("<B1-Motion>", lambda e, r=row_info: self._on_row_drag_motion(e, r))
+        panel.bind("<ButtonRelease-1>", lambda e, r=row_info: self._on_row_drag_end(e, r))
 
         def delete_combatant():
             self._sync_all_rows()
             if self.selected_row_info == row_info: self.selected_row_info = None
             self.current_data["participants"].remove(p)
             self.current_data["participants"].sort(key=lambda x: x.get("init", 0), reverse=True)
-            self._auto_save() # Auto-save row removals
+            self._auto_save()
             self._redraw_workspace()
 
         tk.Button(panel, text="DELETE", bg="#d9534f", fg="white", font=("Arial", 8, "bold"), width=8, command=delete_combatant).pack(side=tk.RIGHT, padx=5)
-
-        hp_container = tk.Frame(panel, bg=initial_color, width=110)
-        hp_container.pack_propagate(False)
-        hp_container.pack(side=tk.RIGHT, padx=10, fill=tk.Y)
-        hp_container.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
-
-        max_hp = self._fetch_max_hp(p.get("target", ""))
-        current_hp = max_hp - p.get("damage", 0)
-
-        lbl_max = tk.Label(hp_container, text=f"/ {max_hp}", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
-        lbl_max.pack(side=tk.RIGHT)
-        lbl_max.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
-
-        hp_en = AutoHeightText(hp_container, canvas_to_refresh=self.main_canvas, width=4, font=("Arial", 10, "bold"), bd=1, relief=tk.SOLID)
-        hp_en.insert(0, str(current_hp))
-        hp_en.pack(side=tk.RIGHT, padx=2)
-        
-        lbl_hp = tk.Label(hp_container, text="HP:", bg=initial_color, fg="white", font=("Arial", 10, "bold"))
-        lbl_hp.pack(side=tk.RIGHT, padx=1)
-        lbl_hp.bind("<Button-1>", lambda e: self._select_combatant_row(row_info))
-
-        name_en = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, font=("Georgia", 11, "bold"), width=25, bg="white", fg="black", insertbackground="black", bd=1, relief=tk.SOLID)
-        name_en.insert(0, p["name"])
-        name_en.pack(side=tk.LEFT, padx=5)
-        name_en.bind("<Button-1>", lambda e: [self._select_combatant_row(row_info), "continue"][1])
 
         btn_stats = tk.Button(panel, text="STATS", bg="#fae6c5", fg="black", font=("Arial", 8, "bold"), width=6, command=lambda: (self._sync_all_rows(), self.open_statblock_cb(p["target"], p["type"])))
         btn_stats.pack(side=tk.LEFT, padx=5)
@@ -2789,9 +2883,7 @@ class CombatRenderer(tk.Frame):
         btn_stats.bind("<Leave>", lambda e: self._on_stats_btn_hover_leave(e))
         btn_stats.bind("<Motion>", lambda e: self._on_stats_btn_hover_motion(e))
 
-        status_box = AutoHeightText(panel, canvas_to_refresh=self.main_canvas, width=15, bg=initial_color, fg="white", bd=0, highlightthickness=0, wrap=tk.WORD)
         status_box.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        row_info["status_box"] = status_box
         
         def custom_adjust_height():
             try:
@@ -2825,6 +2917,12 @@ class CombatRenderer(tk.Frame):
         status_box.tag_bind("status_link", "<Leave>", lambda e: self._on_status_hover_leave(e))
         status_box.tag_bind("status_link", "<Motion>", lambda e, sb=status_box: self._handle_status_hover(e, sb))
 
+        # Re-propagate drag hooks symmetrically through row sub-widgets
+        for child_element in [hp_container, lbl_max, lbl_hp, status_box, name_en]:
+            child_element.bind("<Button-1>", lambda e, r=row_info: self._on_row_drag_start(e, r), add="+")
+            child_element.bind("<B1-Motion>", lambda e, r=row_info: self._on_row_drag_motion(e, r), add="+")
+            child_element.bind("<ButtonRelease-1>", lambda e, r=row_info: self._on_row_drag_end(e, r), add="+")
+
         def update_colors():
             new_color = get_panel_color(s_var.get(), d_var.get())
             panel.configure(bg=new_color)
@@ -2838,7 +2936,7 @@ class CombatRenderer(tk.Frame):
             for child in panel.winfo_children():
                 if isinstance(child, tk.Label): child.configure(bg=new_color, activebackground=new_color)
 
-        row_info.update({"name_var": name_en, "hp_en": hp_en, "lbl_hp": lbl_hp, "lbl_max": lbl_max, "update_colors_cb": update_colors})
+        row_info["update_colors_cb"] = update_colors
         self.participant_rows.append(row_info)
         update_colors()
 
@@ -2898,6 +2996,7 @@ class CombatRenderer(tk.Frame):
         if hasattr(toplevel, "resolve_hover_data"):
             data, dtype = toplevel.resolve_hover_data(prefix, name)
             if data:
+                from stat_renderer import StatBlockRenderer
                 mini_viewer = StatBlockRenderer(popup); mini_viewer.pack(fill=tk.BOTH, expand=True); mini_viewer.clear_overlays()
                 mini_viewer.text.adjust_height = lambda: None; mini_viewer.text.configure(height=1); mini_viewer.render_monster(data); popup.target_text_widget = mini_viewer.text
             else: tk.Label(popup, text=f"Stats for '{p_data['name']}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
@@ -2952,8 +3051,6 @@ class CombatRenderer(tk.Frame):
                 popup.target_text_widget = mini_viewer.text
             else:
                 tk.Label(popup, text=f"Profile '{loc_target}' not found.", bg="#fdf1dc", font=("Arial", 11, "italic")).pack(padx=20, pady=20)
-
-
 import math
 import json
 import networkx as nx
